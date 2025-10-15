@@ -1,0 +1,5 @@
+name: diagnosis
+description: diagnose asssistant
+endpoints:
+  - diagnose
+  - debug
