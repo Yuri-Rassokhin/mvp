@@ -10,24 +10,35 @@ def apply(component: str):
     """
     Apply (deploy or update) a component to its tier environment.
     """
-    typer.echo(f"applying manifest: {component}")
+    typer.echo(f"applying manifest {component}")
 
     base_dir = Path(__file__).parent.parent.resolve()
     manifest_path = base_dir / f"{component}"
 
     if not manifest_path.exists():
-        typer.echo(f"manifest {manifest_path} not found")
+        typer.echo(f"❌ manifest {manifest_path} not found")
         raise typer.Exit(1)
 
     # Install dependencies if requirements.txt is present
     req_file = base_dir / "requirements.txt"
     if req_file.exists():
-        typer.echo("installing dependencies")
+        typer.echo("📦 installing dependencies")
         subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(req_file)], check=True)
 
-    # Launch autorouter
-    typer.echo("constructing endpoints")
-    subprocess.run([sys.executable, str(base_dir / "src" / "autorouter.py"), str(manifest_path)], check=True)
+    # Prepare nohup log file
+    log_file = Path.home() / ".mvp" / f"{manifest_path.stem}.log"
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_file, "ab") as out:
+        subprocess.Popen(
+            [sys.executable, str(base_dir / "src" / "autorouter.py"), str(manifest_path)],
+            stdout=out,
+            stderr=out,
+            stdin=subprocess.DEVNULL,
+            close_fds=True,
+            start_new_session=True  # fully detaches from SSH/tty
+        )
+
+    typer.echo(f"component {manifest_path.stem} has launched, logs in {log_file}")
 
 @app.command()
 def status(component: str):
