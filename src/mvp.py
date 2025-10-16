@@ -2,6 +2,7 @@ from pathlib import Path
 import typer
 import subprocess
 import sys
+import uuid
 
 app = typer.Typer(help="MVP CLI tool to manage lifecycle of a component mesh")
 
@@ -25,20 +26,32 @@ def apply(component: str):
         typer.echo("📦 installing dependencies")
         subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(req_file)], check=True)
 
-    # Prepare nohup log file
-    log_file = Path.home() / ".mvp" / f"{manifest_path.stem}.log"
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_file, "ab") as out:
-        subprocess.Popen(
+    # generate unique log for the current instance of the component
+    component_name = Path(component).stem
+    unique_id = uuid.uuid4().hex  # 32 символа, уникальный
+    log_dir = Path.home() / ".mvp" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Запускаем процесс — пока без PID
+    log_file_base = log_dir / f"{component_name}-{unique_id}"
+    tmp_log_path = log_file_base.with_suffix(".tmp")  # временный лог, до получения PID
+
+    with open(tmp_log_path, "ab") as out:
+        process = subprocess.Popen(
             [sys.executable, str(base_dir / "src" / "autorouter.py"), str(manifest_path)],
             stdout=out,
             stderr=out,
             stdin=subprocess.DEVNULL,
             close_fds=True,
-            start_new_session=True  # fully detaches from SSH/tty
+            start_new_session=True
         )
 
-    typer.echo(f"component {manifest_path.stem} has launched, logs in {log_file}")
+    pid = process.pid
+    final_log_path = log_dir / f"{component_name}-{unique_id}--pid{pid}.log"
+    tmp_log_path.rename(final_log_path)
+
+    typer.echo(f"🚀 Component {component_name} launched (PID: {pid})")
+    typer.echo(f"📂 Logs: {final_log_path}")
 
 @app.command()
 def status(component: str):
