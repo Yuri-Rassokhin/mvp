@@ -78,5 +78,17 @@ for filename in os.listdir(component_dir):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    import socket
+
+    def find_free_port(start=8500, end=8999):
+        for port in range(start, end + 1):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind(("", port))
+                    return port
+                except OSError:
+                    continue
+        raise RuntimeError("no free port found in the range")
+
+    uvicorn.run(app, host="0.0.0.0", port=find_free_port())
 
