@@ -6,10 +6,14 @@ from fastapi import FastAPI
 from pydantic import create_model
 import yaml
 from fastapi.middleware.cors import CORSMiddleware
+import json
+from pathlib import Path
+import socket
+import uvicorn
 
-# === 0. Аргумент: путь к манифесту ===
+# === Аргумент: путь к манифесту ===
 if len(sys.argv) < 2:
-    print("usage: python autorouter.py /path/to/cmesh.yaml")
+    print("usage: python autorouter.py /path/to/manifest.yaml")
     sys.exit(1)
 
 manifest_path = sys.argv[1]
@@ -21,17 +25,16 @@ if not os.path.isfile(manifest_path):
 component_dir = os.path.dirname(os.path.abspath(manifest_path))
 sys.path.insert(0, component_dir)
 
-# === 1. Загрузка манифеста ===
+# === Загрузка манифеста ===
 with open(manifest_path, "r") as f:
     manifest = yaml.safe_load(f)
 
+component_name = manifest.get("name", "unknown-component")
+description = manifest.get("description", "")
 allowed_funcs = set(manifest.get("endpoints", []))
 
-# === 2. FastAPI-приложение ===
-app = FastAPI(
-    title=manifest.get("name", "cmesh-component"),
-    description=manifest.get("description", "")
-)
+# === Создание FastAPI-приложения ===
+app = FastAPI(title=component_name, description=description)
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,7 +42,7 @@ app.add_middleware(
     allow_methods=["*"], allow_headers=["*"]
 )
 
-# === 3. Сканируем все .py-файлы в каталоге ===
+# === Сканируем .py-файлы на предмет функций ===
 for filename in os.listdir(component_dir):
     if not filename.endswith(".py") or filename == os.path.basename(__file__):
         continue
@@ -70,25 +73,62 @@ for filename in os.listdir(component_dir):
         Model = create_model(f"{name.title()}Input", **fields)
 
         async def endpoint(data: Model, _func=func):
-            kwargs = data.dict()
-            return _func(**kwargs)
+            return _func(**data.dict())
 
         app.post(f"/{name}", name=name)(endpoint)
         print(f"endpoint /{name} activated from {filename}")
 
-if __name__ == "__main__":
-    import uvicorn
-    import socket
+# === Поиск свободного порта ===
+def find_free_port(start=8500, end=8999):
+    for port in range(start, end + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError("no free port found in the range")
 
-    def find_free_port(start=8500, end=8999):
-        for port in range(start, end + 1):
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                try:
-                    s.bind(("", port))
-                    return port
-                except OSError:
-                    continue
-        raise RuntimeError("no free port found in the range")
+port = find_free_port()
 
-    uvicorn.run(app, host="0.0.0.0", port=find_free_port())
+# === Сохраняем статус ===
+def update_component_status(name, description, endpoints, port):
+    status_path = Path.home() / ".mvp" / "status"
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if status_path.exists():
+        try:
+            with open(status_path, "r") as f:
+                status = json.load(f)
+            if not isinstance(status, list):
+                status = []
+        except:
+            status = []
+    else:
+        status = []
+
+    for entry in status:
+        if entry.get("name") == name:
+            entry.update({
+                "description": description,
+                "endpoints": endpoints,
+                "port": port,
+                "ip": "0.0.0.0"
+            })
+            break
+    else:
+        status.append({
+            "name": name,
+            "description": description,
+            "endpoints": endpoints,
+            "port": port,
+            "ip": "0.0.0.0"
+        })
+
+    with open(status_path, "w") as f:
+        json.dump(status, f, indent=2)
+
+# === Применяем и запускаем ===
+update_component_status(component_name, description, list(allowed_funcs), port)
+uvicorn.run(app, host="0.0.0.0", port=port)
 
