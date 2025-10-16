@@ -1,5 +1,7 @@
-
+from pathlib import Path
 import typer
+import subprocess
+import sys
 
 app = typer.Typer(help="MVP CLI tool to manage lifecycle of a component mesh")
 
@@ -8,8 +10,24 @@ def apply(component: str):
     """
     Apply (deploy or update) a component to its tier environment.
     """
-    typer.echo(f"🚀 Applying component: {component}")
-    # TODO: implement git clone, dependency install, autorouter launch
+    typer.echo(f"applying manifest: {component}")
+
+    base_dir = Path(__file__).parent.parent.resolve()
+    manifest_path = base_dir / f"{component}"
+
+    if not manifest_path.exists():
+        typer.echo(f"manifest {manifest_path} not found")
+        raise typer.Exit(1)
+
+    # Install dependencies if requirements.txt is present
+    req_file = base_dir / "requirements.txt"
+    if req_file.exists():
+        typer.echo("installing dependencies")
+        subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(req_file)], check=True)
+
+    # Launch autorouter
+    typer.echo("constructing endpoints")
+    subprocess.run([sys.executable, str(base_dir / "src" / "autorouter.py"), str(manifest_path)], check=True)
 
 @app.command()
 def status(component: str):

@@ -1,5 +1,3 @@
-# cmesh_server/autorouter.py
-
 import os
 import sys
 import inspect
@@ -11,12 +9,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # === 0. Аргумент: путь к манифесту ===
 if len(sys.argv) < 2:
-    print("Usage: python autorouter.py /path/to/cmesh.yaml")
+    print("usage: python autorouter.py /path/to/cmesh.yaml")
     sys.exit(1)
 
 manifest_path = sys.argv[1]
 if not os.path.isfile(manifest_path):
-    print(f"[cmesh] Error: File {manifest_path} not found")
+    print(f"error: File {manifest_path} not found")
     sys.exit(1)
 
 # Каталог компонента = каталог, где лежит манифест
@@ -56,7 +54,7 @@ for filename in os.listdir(component_dir):
     try:
         spec.loader.exec_module(module)
     except Exception as e:
-        print(f"[MVP] Error loading {filename}: {e}")
+        print(f"error loading {filename}: {e}")
         continue
 
     for name, func in inspect.getmembers(module, inspect.isfunction):
@@ -76,5 +74,9 @@ for filename in os.listdir(component_dir):
             return _func(**kwargs)
 
         app.post(f"/{name}", name=name)(endpoint)
-        print(f"[MVP] Endpoint /{name} activated from {filename}")
+        print(f"endpoint /{name} activated from {filename}")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8001)
 
