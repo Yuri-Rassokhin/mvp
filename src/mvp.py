@@ -57,6 +57,36 @@ def add(component: str):
     typer.echo(f"📂 Logs: {final_log_path}")
 
 @app.command()
+def rm(component: str):
+    """
+    Delete a component from the mesh (removes it from status file).
+    """
+    from pathlib import Path
+    import json
+
+    status_path = Path.home() / ".mvp" / "status"
+    if not status_path.exists():
+        typer.echo("Status file not found.")
+        raise typer.Exit(1)
+
+    try:
+        with open(status_path, "r") as f:
+            status = json.load(f)
+    except Exception as e:
+        typer.echo(f"❌ Failed to load status file: {e}")
+        raise typer.Exit(1)
+
+    original_len = len(status)
+    status = [entry for entry in status if entry.get("name") != component]
+
+    if len(status) == original_len:
+        typer.echo(f"Component '{component}' not found")
+    else:
+        with open(status_path, "w") as f:
+            json.dump(status, f, indent=2)
+        typer.echo(f"Component '{component}' removed from MVP registry")
+
+@app.command()
 def status(component: str = typer.Argument(None, help="Optional: filter by component name")):
     status_path = Path.home() / ".mvp" / "status"
 
