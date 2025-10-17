@@ -1,0 +1,4 @@
+name: cohere-suggester
+description: Sends description to Cohere and returns model output
+endpoints:
+  - suggest
