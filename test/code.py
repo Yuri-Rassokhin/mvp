@@ -1,4 +1,3 @@
-# diagnosis.py
 def diagnose(description: str):
     return {"diagnosis": "Anemia"}
 
