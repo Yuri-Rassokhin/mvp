@@ -3,6 +3,9 @@ import typer
 import subprocess
 import sys
 import uuid
+import json
+from rich.table import Table
+from rich.console import Console
 
 app = typer.Typer(help="MVP CLI tool to manage lifecycle of a component mesh")
 
@@ -54,12 +57,42 @@ def apply(component: str):
     typer.echo(f"📂 Logs: {final_log_path}")
 
 @app.command()
-def status(component: str):
-    """
-    Show status of the component.
-    """
-    typer.echo(f"🔍 Checking status for component: {component}")
-    # TODO: check current tier, process status, logs
+def status(component: str = typer.Argument(None, help="Optional: filter by component name")):
+    status_path = Path.home() / ".mvp" / "status"
+
+    if not status_path.exists():
+        typer.echo("no components have been applied yet")
+        raise typer.Exit(0)
+
+    try:
+        with open(status_path, "r") as f:
+            components = json.load(f)
+    except Exception as e:
+        typer.echo(f"failed to load status file: {e}")
+        raise typer.Exit(1)
+
+    if component:
+        components = [c for c in components if c.get("name") == component]
+        if not components:
+            typer.echo(f"component '{component}' not found")
+            raise typer.Exit(1)
+
+    table = Table(title="MVP Component Mesh Status")
+
+    table.add_column("Name", style="bold cyan")
+    table.add_column("Description", style="dim")
+    table.add_column("Port", style="bold green")
+    table.add_column("Endpoints", style="magenta")
+
+    for comp in components:
+        name = comp.get("name", "—")
+        desc = comp.get("description", "")
+        port = str(comp.get("port", "—"))
+        endpoints = ", ".join(comp.get("endpoints", []))
+        table.add_row(name, desc, port, endpoints)
+
+    console = Console()
+    console.print(table)    
 
 @app.command()
 def switch(component: str, tier: str = typer.Argument(..., help="Target tier: mock | prod | preprod")):
