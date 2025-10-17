@@ -41,7 +41,7 @@ def add(component: str):
 
     with open(tmp_log_path, "ab") as out:
         process = subprocess.Popen(
-            [sys.executable, str(base_dir / "src" / "autorouter.py"), str(manifest_path)],
+            [sys.executable, str(base_dir / "src" / "autorouter.py"), str(manifest_path), unique_id],
             stdout=out,
             stderr=out,
             stdin=subprocess.DEVNULL,

@@ -12,11 +12,13 @@ import socket
 import uvicorn
 
 # === Аргумент: путь к манифесту ===
-if len(sys.argv) < 2:
-    print("usage: python autorouter.py /path/to/manifest.yaml")
+if len(sys.argv) < 3:
+    print("usage: python autorouter.py /path/to/manifest.yaml <instance_id>")
     sys.exit(1)
 
 manifest_path = sys.argv[1]
+instance_id = sys.argv[2]
+
 if not os.path.isfile(manifest_path):
     print(f"error: File {manifest_path} not found")
     sys.exit(1)
@@ -108,8 +110,9 @@ def update_component_status(name, description, endpoints, port):
         status = []
 
     for entry in status:
-        if entry.get("name") == name:
+        if entry.get("id") == instance_id:
             entry.update({
+                "name": name,
                 "description": description,
                 "endpoints": endpoints,
                 "port": port,
@@ -118,6 +121,7 @@ def update_component_status(name, description, endpoints, port):
             break
     else:
         status.append({
+            "id": instance_id,
             "name": name,
             "description": description,
             "endpoints": endpoints,
