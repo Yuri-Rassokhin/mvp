@@ -6,6 +6,7 @@ import uuid
 import json
 from rich.table import Table
 from rich.console import Console
+from typing import Optional
 
 app = typer.Typer(help="MVP CLI tool to manage lifecycle of a component mesh")
 
@@ -87,42 +88,51 @@ def rm(component: str):
         typer.echo(f"Component '{component}' removed from MVP registry")
 
 @app.command()
-def status(component: str = typer.Argument(None, help="Optional: filter by component name")):
+@app.command()
+def status(component: Optional[str] = None):
+    """
+    Show status of a specific component or all deployed instances.
+    """
+    import json
     status_path = Path.home() / ".mvp" / "status"
-
     if not status_path.exists():
-        typer.echo("no components have been applied yet")
-        raise typer.Exit(0)
+        typer.echo("ℹ️  No components deployed yet.")
+        raise typer.Exit()
 
     try:
         with open(status_path, "r") as f:
-            components = json.load(f)
+            raw = f.read().strip()
+            if not raw:
+                components = []
+            else:
+                components = json.loads(raw)
+            if not isinstance(components, list):
+                raise ValueError("status file must contain a list")
     except Exception as e:
-        typer.echo(f"failed to load status file: {e}")
+        typer.echo(f"❌ Failed to load status file: {e}")
         raise typer.Exit(1)
 
-    if component:
-        components = [c for c in components if c.get("name") == component]
-        if not components:
-            typer.echo(f"component '{component}' not found")
-            raise typer.Exit(1)
+    filtered = [
+        entry for entry in components
+        if component is None or entry.get("name") == component
+    ]
 
-    table = Table(title="MVP Component Registry")
+    if not filtered:
+        if component:
+            typer.echo(f"❌ No instances found for component: {component}")
+        else:
+            typer.echo("ℹ️  No component instances found.")
+        raise typer.Exit()
 
-    table.add_column("Name", style="bold cyan")
-    table.add_column("Description", style="dim")
-    table.add_column("Port", style="bold green")
-    table.add_column("Endpoints", style="magenta")
-
-    for comp in components:
-        name = comp.get("name", "—")
-        desc = comp.get("description", "")
-        port = str(comp.get("port", "—"))
-        endpoints = ", ".join(comp.get("endpoints", []))
-        table.add_row(name, desc, port, endpoints)
-
-    console = Console()
-    console.print(table)    
+    for entry in filtered:
+        typer.echo("────────────────────────────────────────")
+        typer.echo(f"🆔 ID:         {entry.get('id', '[unknown]')}")
+        typer.echo(f"🔧 Name:       {entry.get('name', '[unknown]')}")
+        typer.echo(f"📝 Desc:       {entry.get('description', '')}")
+        typer.echo(f"📡 Endpoints:  {', '.join(entry.get('endpoints', []))}")
+        typer.echo(f"🌐 IP:         {entry.get('ip', '')}")
+        typer.echo(f"🚪 Port:       {entry.get('port', '')}")
+    typer.echo("────────────────────────────────────────")
 
 @app.command()
 def switch(component: str, tier: str = typer.Argument(..., help="Target tier: mock | prod | preprod")):
