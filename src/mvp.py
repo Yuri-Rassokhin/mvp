@@ -77,7 +77,7 @@ def status(component: str = typer.Argument(None, help="Optional: filter by compo
             typer.echo(f"component '{component}' not found")
             raise typer.Exit(1)
 
-    table = Table(title="MVP Component Mesh Status")
+    table = Table(title="MVP Component Registry")
 
     table.add_column("Name", style="bold cyan")
     table.add_column("Description", style="dim")
