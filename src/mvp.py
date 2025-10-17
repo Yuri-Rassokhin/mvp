@@ -10,11 +10,11 @@ from rich.console import Console
 app = typer.Typer(help="MVP CLI tool to manage lifecycle of a component mesh")
 
 @app.command()
-def apply(component: str):
+def add(component: str):
     """
-    Apply (deploy or update) a component to its tier environment.
+    Deploy new instance of a component to its tier environment.
     """
-    typer.echo(f"applying manifest {component}")
+    typer.echo(f"building component from manifest {component}")
 
     base_dir = Path(__file__).parent.parent.resolve()
     manifest_path = base_dir / f"{component}"
