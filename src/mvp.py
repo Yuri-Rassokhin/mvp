@@ -162,36 +162,53 @@ def status(component: Optional[str] = None):
     else:
         typer.echo("URL not found")
 
+from typing import List
+
 @app.command()
 def call(
-    id: str,
+    target: str,
     endpoint: str,
     json_parts: List[str] = typer.Argument(..., help="JSON payload split into parts (e.g. '{\"key\":', '\"value\"}')")
 ):
     """
-    Call an endpoint on a deployed component by ID, passing JSON input.
+    Call an endpoint on a deployed instance (by ID or component name), passing JSON input.
     """
     import requests
     import json
 
-    json_str = " ".join(json_parts)  # ← склеиваем все части в одну строку
+    # склеиваем JSON
+    json_str = " ".join(json_parts)
     try:
-        json_data = json.loads(json_str)  # проверяем, что это валидный JSON
+        json_data = json.loads(json_str)
     except json.JSONDecodeError as e:
         typer.echo(f"❌ Invalid JSON: {e}")
         raise typer.Exit(1)
 
     # читаем статус
     status_path = Path.home() / ".mvp" / "status"
+    if not status_path.exists():
+        typer.echo("❌ Status file not found.")
+        raise typer.Exit(1)
+
     with open(status_path, "r") as f:
         status = json.load(f)
 
-    match = next((s for s in status if s["id"] == id), None)
+    # пробуем найти по ID
+    match = next((s for s in status if s.get("id") == target), None)
+
+    # если не нашли по ID — ищем по имени компонента
     if not match:
-        typer.echo(f"❌ Component with ID '{id}' not found")
+        match = next((s for s in status if s.get("name") == target), None)
+
+    if not match:
+        typer.echo(f"❌ No instance found with ID or name '{target}'")
         raise typer.Exit(1)
 
-    port = match["port"]
+    port = match.get("port")
+    if not port:
+        typer.echo(f"❌ No port found for instance '{target}'")
+        raise typer.Exit(1)
+
     url = f"http://localhost:{port}/{endpoint}"
 
     try:
