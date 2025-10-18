@@ -109,6 +109,33 @@ def update_component_status(name, description, endpoints, port):
     else:
         status = []
 
+    # Получаем сигнатуры входов/выходов для функций из этого компонента
+    io_signatures = {}
+    for fname in endpoints:
+        func = getattr(module, fname, None)
+        if not func:
+            continue
+
+        sig = inspect.signature(func)
+
+        args = {
+            k: str(v.annotation.__name__) if v.annotation != inspect._empty else "str"
+            for k, v in sig.parameters.items()
+        }
+
+        return_type = sig.return_annotation
+        if return_type == inspect._empty:
+            ret = "Any"
+        elif hasattr(return_type, "__name__"):
+            ret = return_type.__name__
+        else:
+            ret = str(return_type)
+
+        io_signatures[fname] = {
+            "inputs": args,
+            "returns": ret
+        }
+
     for entry in status:
         if entry.get("id") == instance_id:
             entry.update({
@@ -116,7 +143,8 @@ def update_component_status(name, description, endpoints, port):
                 "description": description,
                 "endpoints": endpoints,
                 "port": port,
-                "ip": "0.0.0.0"
+                "ip": "0.0.0.0",
+                "io": io_signatures
             })
             break
     else:
@@ -126,7 +154,8 @@ def update_component_status(name, description, endpoints, port):
             "description": description,
             "endpoints": endpoints,
             "port": port,
-            "ip": "0.0.0.0"
+            "ip": "0.0.0.0",
+            "io": io_signatures
         })
 
     with open(status_path, "w") as f:
