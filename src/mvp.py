@@ -1,4 +1,6 @@
 from pathlib import Path
+from typing import Annotated
+from typing import List
 import typer
 import os
 import signal
@@ -159,6 +161,45 @@ def status(component: Optional[str] = None):
             typer.echo(f"http://{ip}:{port}/{ep}   {arg_str} → {output}")
     else:
         typer.echo("URL not found")
+
+@app.command()
+def call(
+    id: str,
+    endpoint: str,
+    json_parts: List[str] = typer.Argument(..., help="JSON payload split into parts (e.g. '{\"key\":', '\"value\"}')")
+):
+    """
+    Call an endpoint on a deployed component by ID, passing JSON input.
+    """
+    import requests
+    import json
+
+    json_str = " ".join(json_parts)  # ← склеиваем все части в одну строку
+    try:
+        json_data = json.loads(json_str)  # проверяем, что это валидный JSON
+    except json.JSONDecodeError as e:
+        typer.echo(f"❌ Invalid JSON: {e}")
+        raise typer.Exit(1)
+
+    # читаем статус
+    status_path = Path.home() / ".mvp" / "status"
+    with open(status_path, "r") as f:
+        status = json.load(f)
+
+    match = next((s for s in status if s["id"] == id), None)
+    if not match:
+        typer.echo(f"❌ Component with ID '{id}' not found")
+        raise typer.Exit(1)
+
+    port = match["port"]
+    url = f"http://localhost:{port}/{endpoint}"
+
+    try:
+        resp = requests.post(url, json=json_data)
+        typer.echo(f"✅ Response [{resp.status_code}]:\n{resp.text}")
+    except Exception as e:
+        typer.echo(f"❌ Request failed: {e}")
+        raise typer.Exit(1)
 
 @app.command()
 def switch(component: str, tier: str = typer.Argument(..., help="Target tier: mock | prod | preprod")):
