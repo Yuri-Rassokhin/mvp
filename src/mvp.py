@@ -125,13 +125,22 @@ def status(component: Optional[str] = None):
 
     for entry in filtered:
         typer.echo("────────────────────────────────────────")
-        typer.echo(f"🆔 ID:         {entry.get('id', '[unknown]')}")
-        typer.echo(f"🔧 Name:       {entry.get('name', '[unknown]')}")
-        typer.echo(f"📝 Desc:       {entry.get('description', '')}")
-        typer.echo(f"📡 Endpoints:  {', '.join(entry.get('endpoints', []))}")
-        typer.echo(f"🌐 IP:         {entry.get('ip', '')}")
-        typer.echo(f"🚪 Port:       {entry.get('port', '')}")
-    typer.echo("────────────────────────────────────────")
+        typer.echo(f"ID      {entry.get('id', '[unknown]')}")
+        typer.echo(f"Name    {entry.get('name', '[unknown]')}")
+        typer.echo(f"Desc    {entry.get('description', '')}")
+
+        ip = entry.get("ip", "0.0.0.0")
+        port = entry.get("port", "")
+        endpoints = entry.get("endpoints", [])
+
+        if endpoints:
+            typer.echo("URL")
+            for ep in endpoints:
+                typer.echo(f"  http://{ip}:{port}/{ep}")
+        else:
+            typer.echo("URL not found")
+
+        typer.echo("────────────────────────────────────────")
 
 @app.command()
 def switch(component: str, tier: str = typer.Argument(..., help="Target tier: mock | prod | preprod")):
