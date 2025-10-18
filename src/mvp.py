@@ -213,7 +213,8 @@ def call(
 
     try:
         resp = requests.post(url, json=json_data)
-        typer.echo(f"✅ Response [{resp.status_code}]:\n{resp.text}")
+#        typer.echo(f"✅ Response [{resp.status_code}]:\n{resp.text}")
+        typer.echo(f"{resp.text}")
     except Exception as e:
         typer.echo(f"❌ Request failed: {e}")
         raise typer.Exit(1)
