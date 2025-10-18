@@ -1,5 +1,7 @@
 from pathlib import Path
 import typer
+import os
+import signal
 import subprocess
 import sys
 import uuid
@@ -21,13 +23,13 @@ def add(component: str):
     manifest_path = base_dir / f"{component}"
 
     if not manifest_path.exists():
-        typer.echo(f"❌ manifest {manifest_path} not found")
+        typer.echo(f"manifest {manifest_path} not found")
         raise typer.Exit(1)
 
     # Install dependencies if requirements.txt is present
     req_file = base_dir / "requirements.txt"
     if req_file.exists():
-        typer.echo("📦 installing dependencies")
+        typer.echo("installing dependencies")
         subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(req_file)], check=True)
 
     # generate unique log for the current instance of the component
@@ -51,23 +53,22 @@ def add(component: str):
         )
 
     pid = process.pid
-    final_log_path = log_dir / f"{component_name}-{unique_id}--pid{pid}.log"
+    final_log_path = log_dir / f"{component_name}-{unique_id}-pid{pid}.log"
     tmp_log_path.rename(final_log_path)
 
-    typer.echo(f"🚀 Component {component_name} launched (PID: {pid})")
-    typer.echo(f"📂 Logs: {final_log_path}")
+    typer.echo(f"component {component_name} launched, log {final_log_path}")
 
 @app.command()
 def rm(instance: str):
     """
-    Delete a component from the mesh (removes it from status file).
+    Stop a component and delete it from the registry
     """
     from pathlib import Path
     import json
 
     status_path = Path.home() / ".mvp" / "status"
     if not status_path.exists():
-        typer.echo("Status file not found.")
+        typer.echo("status file not found")
         raise typer.Exit(1)
 
     try:
@@ -77,15 +78,29 @@ def rm(instance: str):
         typer.echo(f"❌ Failed to load status file: {e}")
         raise typer.Exit(1)
 
+    # Поиск PID по instance_id через ps
+    try:
+        ps_out = subprocess.check_output(["ps", "aux"], text=True)
+        for line in ps_out.splitlines():
+            if instance in line and "autorouter.py" in line:
+                parts = line.split()
+                pid = int(parts[1])
+                os.kill(pid, signal.SIGTERM)
+                break
+        else:
+            typer.echo(f"instance {instance} is not running")
+    except Exception as e:
+        typer.echo(f"failed to search or kill instance process: {e}")
+
     original_len = len(status)
     status = [entry for entry in status if entry.get("id") != instance]
 
     if len(status) == original_len:
-        typer.echo(f"Component '{component}' not found")
+        typer.echo(f"instance {instance} not found")
     else:
         with open(status_path, "w") as f:
             json.dump(status, f, indent=2)
-        typer.echo(f"instance '{instance}' removed from MVP registry")
+        typer.echo(f"instance {instance} stopped and removed from MVP registry")
 
 @app.command()
 def status(component: Optional[str] = None):
@@ -95,7 +110,7 @@ def status(component: Optional[str] = None):
     import json
     status_path = Path.home() / ".mvp" / "status"
     if not status_path.exists():
-        typer.echo("ℹ️  No components deployed yet.")
+        typer.echo("MVP registry is empty")
         raise typer.Exit()
 
     try:
@@ -120,7 +135,7 @@ def status(component: Optional[str] = None):
         if component:
             typer.echo(f"no instances found for component: {component}")
         else:
-            typer.echo("no component instances found.")
+            typer.echo("MVP registry is empty")
         raise typer.Exit()
 
     for entry in filtered:
@@ -134,13 +149,10 @@ def status(component: Optional[str] = None):
         endpoints = entry.get("endpoints", [])
 
         if endpoints:
-            typer.echo("URL")
             for ep in endpoints:
                 typer.echo(f"  http://{ip}:{port}/{ep}")
         else:
             typer.echo("URL not found")
-
-        typer.echo("────────────────────────────────────────")
 
 @app.command()
 def switch(component: str, tier: str = typer.Argument(..., help="Target tier: mock | prod | preprod")):
