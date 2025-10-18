@@ -58,7 +58,7 @@ def add(component: str):
     typer.echo(f"📂 Logs: {final_log_path}")
 
 @app.command()
-def rm(component: str):
+def rm(instance: str):
     """
     Delete a component from the mesh (removes it from status file).
     """
@@ -78,16 +78,15 @@ def rm(component: str):
         raise typer.Exit(1)
 
     original_len = len(status)
-    status = [entry for entry in status if entry.get("name") != component]
+    status = [entry for entry in status if entry.get("id") != instance]
 
     if len(status) == original_len:
         typer.echo(f"Component '{component}' not found")
     else:
         with open(status_path, "w") as f:
             json.dump(status, f, indent=2)
-        typer.echo(f"Component '{component}' removed from MVP registry")
+        typer.echo(f"instance '{instance}' removed from MVP registry")
 
-@app.command()
 @app.command()
 def status(component: Optional[str] = None):
     """
@@ -119,9 +118,9 @@ def status(component: Optional[str] = None):
 
     if not filtered:
         if component:
-            typer.echo(f"❌ No instances found for component: {component}")
+            typer.echo(f"no instances found for component: {component}")
         else:
-            typer.echo("ℹ️  No component instances found.")
+            typer.echo("no component instances found.")
         raise typer.Exit()
 
     for entry in filtered:
