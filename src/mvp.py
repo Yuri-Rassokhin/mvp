@@ -153,10 +153,10 @@ def status(component: Optional[str] = None):
         for ep in endpoints:
             sig = io.get(ep, {})
             inputs = sig.get("inputs", {})
-            output = sig.get("output", "unknown")
+            output = sig.get("returns", "unknown")
 
-            arg_str = ", ".join(f"{k}: {v}" for k, v in inputs.items()) if inputs else ""
-            typer.echo(f"http://{ip}:{port}/{ep}  {arg_str} → {output}")
+            arg_str = ", ".join(f"\"{k}\": {v}" for k, v in inputs.items()) if inputs else ""
+            typer.echo(f"http://{ip}:{port}/{ep}   {arg_str} → {output}")
     else:
         typer.echo("URL not found")
 

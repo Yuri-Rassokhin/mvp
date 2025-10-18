@@ -123,17 +123,9 @@ def update_component_status(name, description, endpoints, port):
             for k, v in sig.parameters.items()
         }
 
-        return_type = sig.return_annotation
-        if return_type == inspect._empty:
-            ret = "Any"
-        elif hasattr(return_type, "__name__"):
-            ret = return_type.__name__
-        else:
-            ret = str(return_type)
-
         io_signatures[fname] = {
             "inputs": args,
-            "returns": ret
+            "returns": "JSON"
         }
 
     for entry in status:
