@@ -1,6 +1,2 @@
 def diagnose(description: str):
-    return {"diagnosis": "Anemia"}
-
-def debug(description: str):
-    return {"debug": True}
-
+    return {"diagnosis": "Dude, you're OK :)"}

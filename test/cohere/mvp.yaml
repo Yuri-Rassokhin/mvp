@@ -1,4 +1,4 @@
-name: cohere-suggester
-description: Sends description to Cohere and returns model output
+name: cohere-qa
+description: Cohere answers a question
 endpoints:
-  - suggest
+  - answer
