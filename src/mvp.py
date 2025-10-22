@@ -149,18 +149,16 @@ def status(component: Optional[str] = None):
         ip = entry.get("ip", "0.0.0.0")
         port = entry.get("port", "")
         endpoints = entry.get("endpoints", [])
-
-    if endpoints:
         io = entry.get("io", {})
-        for ep in endpoints:
-            sig = io.get(ep, {})
-            inputs = sig.get("inputs", {})
-            output = sig.get("returns", "unknown")
 
-            arg_str = ", ".join(f"\"{k}\": {v}" for k, v in inputs.items()) if inputs else ""
-            typer.echo(f"http://{ip}:{port}/{ep}   {arg_str} → {output}")
-    else:
-        typer.echo("URL not found")
+        if endpoints:
+            for ep in endpoints:
+                sig = io.get(ep, {})
+                inputs = sig.get("inputs", {})
+                arg_str = ", ".join(f"\"{k}\": {v}" for k, v in inputs.items()) if inputs else ""
+                typer.echo(f"http://{ip}:{port}/{ep}, {arg_str}")
+        else:
+            typer.echo("URL not found")
 
 from typing import List
 
@@ -217,6 +215,33 @@ def call(
         typer.echo(f"{resp.text}")
     except Exception as e:
         typer.echo(f"❌ Request failed: {e}")
+        raise typer.Exit(1)
+
+@app.command()
+def log(id: str):
+    """
+    Show log output of a specific component instance by ID.
+    """
+    from pathlib import Path
+
+    log_dir = Path.home() / ".mvp" / "logs"
+    if not log_dir.exists():
+        typer.echo("❌ Log directory not found")
+        raise typer.Exit(1)
+
+    # Находим соответствующий лог-файл
+    matching_logs = list(log_dir.glob(f"mvp-{id}-pid*.log"))
+    if not matching_logs:
+        typer.echo(f"❌ No log file found for ID {id}")
+        raise typer.Exit(1)
+
+    log_file = matching_logs[0]
+    typer.echo(f"📄 Showing log: {log_file}\n{'─'*40}")
+    try:
+        with open(log_file, "r") as f:
+            typer.echo(f.read())
+    except Exception as e:
+        typer.echo(f"❌ Failed to read log file: {e}")
         raise typer.Exit(1)
 
 @app.command()
