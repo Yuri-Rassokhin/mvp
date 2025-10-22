@@ -21,7 +21,7 @@ def train(dataset: str, target: str):
     global model
     df = pd.read_csv(dataset)
     y = df[target]
-    X = df.drop(columns=[target])
+    X = df.drop(columns=[target]).select_dtypes(include=["number"])
     dtrain = xgb.DMatrix(X, label=y)
 
     model = xgb.train(params={"objective": "reg:squarederror"}, dtrain=dtrain, num_boost_round=10)
