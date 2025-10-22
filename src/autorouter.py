@@ -62,6 +62,18 @@ for filename in os.listdir(component_dir):
         print(f"error loading {filename}: {e}")
         continue
 
+    # Выполняем действия, указанные в start (если есть)
+    start_funcs = manifest.get("start", [])
+    for func_name in start_funcs:
+        if hasattr(module, func_name):
+            try:
+                getattr(module, func_name)()
+                print(f"start function '{func_name}' executed from {filename}")
+            except Exception as e:
+                print(f"error running start function '{func_name}': {e}")
+        else:
+            print(f"start function '{func_name}' not found in {filename}")
+
     for name, func in inspect.getmembers(module, inspect.isfunction):
         if name not in allowed_funcs:
             continue
@@ -119,7 +131,9 @@ def update_component_status(name, description, endpoints, port):
         sig = inspect.signature(func)
 
         args = {
-            k: str(v.annotation.__name__) if v.annotation != inspect._empty else "str"
+            k: getattr(v.annotation, "__name__", str(v.annotation)) if v.annotation != inspect._empty else "str"
+# this option disallows List and such 
+#            k: str(v.annotation.__name__) if v.annotation != inspect._empty else "str"
             for k, v in sig.parameters.items()
         }
 
