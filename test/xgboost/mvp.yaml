@@ -1,0 +1,6 @@
+name: xgboost-regression
+description: Trains and uses an XGBoost model
+endpoints:
+  - train
+  - predict
+  - load
