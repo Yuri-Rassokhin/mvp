@@ -149,7 +149,7 @@ def update_component_status(name, description, endpoints, port):
                 "description": description,
                 "endpoints": endpoints,
                 "port": port,
-                "ip": "0.0.0.0",
+                "ip": socket.gethostbyname(socket.gethostname()),
                 "io": io_signatures
             })
             break
@@ -160,7 +160,7 @@ def update_component_status(name, description, endpoints, port):
             "description": description,
             "endpoints": endpoints,
             "port": port,
-            "ip": "0.0.0.0",
+            "ip": socket.gethostbyname(socket.gethostname()),
             "io": io_signatures
         })
 
