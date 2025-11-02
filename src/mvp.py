@@ -3,6 +3,7 @@ from typing import Annotated
 from typing import List
 import typer
 import os
+import yaml
 import signal
 import subprocess
 import sys
@@ -11,22 +12,80 @@ import json
 from rich.table import Table
 from rich.console import Console
 from typing import Optional
+from server.oracle import add_instance, remove_instance
+import time
 
 app = typer.Typer(help="MVP CLI tool to manage lifecycle of a component mesh")
+
+import time
+import json
+from pathlib import Path
+
+def wait_for_instance_in_status(instance_id: str, timeout=5.0):
+    """
+    Ждет, пока запись об instance появится в файле ~/.mvp/status.
+    """
+    status_path = Path.home() / ".mvp" / "status"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not status_path.exists():
+            time.sleep(0.1)
+            continue
+        try:
+            with open(status_path, "r") as f:
+                status = json.load(f)
+            for entry in status:
+                if entry.get("id") == instance_id:
+                    return entry
+        except Exception:
+            pass
+        time.sleep(0.1)
+    raise RuntimeError(f"⏳ Timeout: instance {instance_id} not found in status after {timeout}s")
 
 @app.command()
 def add(component: str):
     """
     Deploy new instance of a component to its tier environment.
     """
-    typer.echo(f"building component from manifest {component}")
-
     base_dir = Path(__file__).parent.parent.resolve()
-    manifest_path = base_dir / f"{component}"
+    manifest_path = Path(component).expanduser().resolve()
+
+    import subprocess
+    import uuid
 
     if not manifest_path.exists():
-        typer.echo(f"manifest {manifest_path} not found")
+        typer.echo(f"❌ Manifest not found: {manifest_path}")
         raise typer.Exit(1)
+
+    try:
+        with open(manifest_path, "r") as f:
+            manifest = yaml.safe_load(f)
+    except Exception as e:
+        typer.echo(f"❌ Failed to parse manifest as YAML: {e}")
+        raise typer.Exit(1)
+
+    # ✅ Валидация содержимого YAML
+    if not isinstance(manifest, dict):
+        typer.echo("❌ Manifest must be a YAML dictionary")
+        raise typer.Exit(1)
+
+    required_keys = ["name", "endpoints"]
+    for key in required_keys:
+        if key not in manifest:
+            typer.echo(f"❌ Manifest missing required key: {key}")
+            raise typer.Exit(1)
+
+    if not isinstance(manifest["endpoints"], list) or not all(isinstance(x, str) for x in manifest["endpoints"]):
+        typer.echo("❌ 'endpoints' must be a list of strings")
+        raise typer.Exit(1)
+
+    if "start" in manifest:
+        if not isinstance(manifest["start"], list) or not all(isinstance(x, str) for x in manifest["start"]):
+            typer.echo("❌ 'start' must be a list of strings if specified")
+            raise typer.Exit(1)
+
+    if "description" not in manifest:
+        typer.echo("⚠️  Warning: Manifest has no 'description'")
 
     # Install dependencies if requirements.txt is present
     req_file = base_dir / "requirements.txt"
@@ -58,7 +117,28 @@ def add(component: str):
     final_log_path = log_dir / f"{component_name}-{unique_id}-pid{pid}.log"
     tmp_log_path.rename(final_log_path)
 
-    typer.echo(f"component {component_name} launched, log {final_log_path}")
+    # 🔽 Ждем появления записи в статусе
+    try:
+        instance_record = wait_for_instance_in_status(unique_id)
+    except RuntimeError as e:
+        typer.echo(str(e))
+        raise typer.Exit(1)
+
+    endpoint_strings = []
+    for ep in instance_record["endpoints"]:
+        sig = instance_record.get("io", {}).get(ep, {}).get("inputs", {})
+        formatted_sig = ", ".join(f"{k}: {v}" for k, v in sig.items())
+        endpoint_strings.append(f"{ep} {{{formatted_sig}}}")
+
+    add_instance(
+        instance_record['name'],
+        unique_id,
+        instance_record['description'],
+        f"http://{instance_record['ip']}:{instance_record['port']}",
+        endpoint_strings
+    )
+
+    typer.echo(f"instance {unique_id} of the component {component_name} launched")
 
 @app.command()
 def rm(instance: str):
@@ -102,10 +182,15 @@ def rm(instance: str):
     else:
         with open(status_path, "w") as f:
             json.dump(status, f, indent=2)
+
+    try:
+        remove_instance(instance)
         typer.echo(f"instance {instance} stopped and removed from MVP registry")
+    except Exception as e:
+        typer.echo(f"instance {instance} stopped, but failed to remove from database: {e}")
 
 @app.command()
-def status(component: Optional[str] = None):
+def ls(component: Optional[str] = None):
     """
     Show status of a specific component or all deployed instances.
     """
