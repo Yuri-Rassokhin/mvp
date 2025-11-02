@@ -1,3 +1,6 @@
-test/__pycache__/
-test/cohere/__pycache__/
-test/dummy/__pycache__/
+test/__pycache__
+test/cohere/__pycache__
+test/dummy/__pycache__
+test/llama/__pycache__
+test/xgboost/__pycache__
+env.sh
