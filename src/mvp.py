@@ -39,7 +39,7 @@ def wait_for_instance_in_status(instance_id: str, timeout=5.0):
                     return entry
         except Exception:
             pass
-        time.sleep(0.1)
+        time.sleep(180)
     raise RuntimeError(f"⏳ Timeout: instance {instance_id} not found in status after {timeout}s")
 
 @app.command()
