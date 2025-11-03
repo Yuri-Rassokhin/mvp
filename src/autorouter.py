@@ -1,5 +1,14 @@
-import os
 import sys
+from pathlib import Path
+
+manifest_path = sys.argv[1]
+component_root = str(Path(manifest_path).parent.resolve())
+
+# Добавим в sys.path корень компонента, как корневой пакет
+if component_root not in sys.path:
+    sys.path.insert(0, component_root)
+
+import os
 import inspect
 import importlib.util
 from fastapi import FastAPI
@@ -7,18 +16,27 @@ from pydantic import create_model
 import yaml
 from fastapi.middleware.cors import CORSMiddleware
 import json
-from pathlib import Path
 import socket
 import uvicorn
 import ast
+import importlib.util
+from types import ModuleType
+from typing import Set, List
+from util import (
+    find_candidate_files,
+    has_top_level_code,
+    scan_and_import_endpoints
+)
 
 
 
 def load_and_register_module(filepath: str, allowed_funcs: set, start_funcs: list, app: FastAPI):
-    modulename = Path(filepath).stem
-    spec = importlib.util.spec_from_file_location(modulename, filepath)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[modulename] = module
+    # filepath: /home/opc/medical-symptome-preprocessor/src/endpoint/endpoint.py
+    # relative_path: src/endpoint/endpoint.py
+    relative_path = os.path.relpath(filepath, component_root).replace("/", ".").replace("\\", ".")
+    modulename = relative_path[:-3]  # remove .py
+
+    module = importlib.import_module(modulename)
 
     try:
         spec.loader.exec_module(module)
@@ -91,24 +109,35 @@ def is_safe_module(filepath: str, allowed_funcs: set) -> bool:
 
 
 def scan_and_register(component_dir: str, allowed_funcs: set, start_funcs: list, app):
+    """
+    Рекурсивно обходит все .py-файлы внутри component_dir,
+    проверяет, безопасны ли они, и регистрирует функции как endpoint'ы.
+    Возвращает список успешно загруженных модулей.
+    """
     loaded_modules = []
+
     for root, _, files in os.walk(component_dir):
         for filename in files:
-            if not filename.endswith(".py") or filename == os.path.basename(__file__):
+            if not filename.endswith(".py") or filename.startswith("__") or filename == os.path.basename(__file__):
                 continue
 
             filepath = os.path.join(root, filename)
 
-            if filename.startswith("__") or "venv" in root or "tests" in root:
+            # Пропускаем очевидные служебные папки
+            if "venv" in filepath or "tests" in filepath or "site-packages" in filepath:
                 continue
 
+            # Безопасность через AST-анализ
             if not is_safe_module(filepath, allowed_funcs):
+                print(f"⛔ Skipping unsafe module: {filepath}")
                 continue
 
             print(f"✅ Registering safe module: {filepath}")
             module = load_and_register_module(filepath, allowed_funcs, start_funcs, app)
-            if module:
+
+            if module is not None:
                 loaded_modules.append(module)
+
     return loaded_modules
 
 
@@ -193,46 +222,51 @@ if len(sys.argv) < 3:
     print("usage: python autorouter.py /path/to/manifest.yaml <instance_id>")
     sys.exit(1)
 
-manifest_path = sys.argv[1]
+manifest_path = Path(sys.argv[1]).resolve()
 instance_id = sys.argv[2]
 
-if not os.path.isfile(manifest_path):
+
+if not manifest_path.is_file():
     print(f"error: File {manifest_path} not found")
     sys.exit(1)
 
+
 # Каталог компонента = каталог, где лежит манифест
-component_dir = os.path.dirname(os.path.abspath(manifest_path))
-sys.path.insert(0, component_dir)
+component_dir = manifest_path.parent
+
+
+# Добавляем component_dir в sys.path — чтобы импорты работали
+if str(component_dir) not in sys.path:
+    sys.path.insert(0, str(component_dir))
+
 
 # === Загрузка манифеста ===
-with open(manifest_path, "r") as f:
+with manifest_path.open("r") as f:
     manifest = yaml.safe_load(f)
+
 
 component_name = manifest.get("name", "unknown-component")
 description = manifest.get("description", "")
 allowed_funcs = set(manifest.get("endpoints", []))
+start_funcs = manifest.get("start", [])
+
 
 # === Создание FastAPI-приложения ===
 app = FastAPI(title=component_name, description=description)
 
+
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"]
+CORSMiddleware,
+allow_origins=["*"],
+allow_credentials=True,
+allow_methods=["*"],
+allow_headers=["*"]
 )
 
+
 # === Сканируем .py-файлы на предмет функций ===
-# Один раз сканируем весь component_dir и получаем модуль
-module = scan_and_register(component_dir, allowed_funcs, manifest.get("start", []), app)
-
-# Выделяем порт
+modules = scan_and_import_endpoints(component_dir, allowed_funcs, start_funcs, app, component_root)
 port = find_free_port()
-
-# Обновляем статус с найденным модулем
-update_component_status(component_name, description, list(allowed_funcs), port, module)
-
-# Запускаем FastAPI на найденном порту
+update_component_status(component_name, description, list(allowed_funcs), port, modules)
 uvicorn.run(app, host="0.0.0.0", port=port)
-
-
 
