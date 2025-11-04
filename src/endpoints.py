@@ -14,7 +14,7 @@ import uvicorn
 
 
 
-# === Безопасная проверка на наличие глобального кода ===
+# Returns True if file has unsafe code in global scope, False otherwise
 def has_top_level_code(filepath):
     with open(filepath, "r") as f:
         node = ast.parse(f.read(), filename=filepath)
@@ -23,7 +23,9 @@ def has_top_level_code(filepath):
                 return True
     return False
 
-# === Находим .py-файлы с нужными endpoint-функциями ===
+
+
+# Return list of files with endpoint functions
 def find_candidate_files(component_dir, allowed_funcs):
     candidates = []
     for root, _, files in os.walk(component_dir):
@@ -40,6 +42,8 @@ def find_candidate_files(component_dir, allowed_funcs):
                 except Exception as e:
                     print(f"❌ Failed to parse {path}: {e}")
     return candidates
+
+
 
 def safe_import_module(filepath, component_root):
     filepath = Path(filepath).resolve()
@@ -58,13 +62,15 @@ def safe_import_module(filepath, component_root):
     module = importlib.import_module(module_name)
     return module
 
+
+
 # === Сканируем нужные модули и создаём endpoint'ы ===
 def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_funcs: list, app: FastAPI, component_root: str):
     modules = []
     candidate_files = find_candidate_files(component_dir, allowed_funcs)
 
     for filepath in candidate_files:
-        print(f"🔍 Checking: {filepath}")
+        print(f"Converting {filepath}")
 
         if has_top_level_code(filepath):
             raise RuntimeError(f"❌ Unsafe global code found in: {filepath}. Aborting.")
@@ -81,9 +87,9 @@ def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_func
             if hasattr(module, fname):
                 try:
                     getattr(module, fname)()
-                    print(f"🔁 start function '{fname}' executed from {filepath}")
+                    print(f"✅ Start function '{fname}' executed from {filepath}")
                 except Exception as e:
-                    print(f"⚠️ error running start function '{fname}': {e}")
+                    print(f"❌ Start function '{fname}' failed in {filepath}: {e}")
 
         for name, func in inspect.getmembers(module, inspect.isfunction):
             if name in allowed_funcs:
@@ -98,7 +104,7 @@ def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_func
                     return _func(**data.dict())
 
                 app.post(f"/{name}", name=name)(endpoint)
-                print(f"✅ endpoint /{name} activated from {filepath}")
+                print(f"✅ Endpoint /{name} activated from {filepath}")
 
     return modules
 

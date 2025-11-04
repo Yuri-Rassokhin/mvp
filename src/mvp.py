@@ -21,6 +21,44 @@ import time
 import json
 from pathlib import Path
 
+import time
+
+def tail_log_until_uvicorn_ready(log_path: Path, timeout: int = 180, poll_interval: float = 0.5) -> bool:
+    """
+    Читает лог в реальном времени, пока не появится строка от Uvicorn.
+    Возвращает True, если удалось дождаться запуска, False — если по таймауту.
+    """
+    deadline = time.time() + timeout
+    seen_uvicorn = False
+    position = 0
+
+    print("⏳ Waiting for autorouter to start...")
+
+    while time.time() < deadline:
+        if log_path.exists():
+            with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                f.seek(position)
+                lines = f.readlines()
+                position = f.tell()
+
+                for line in lines:
+                    line = line.strip()
+                    print(line)
+                    if "Uvicorn running on" in line:
+                        seen_uvicorn = True
+                        break
+
+        if seen_uvicorn:
+            print("✅ autorouter started (Uvicorn is running)")
+            return True
+
+        time.sleep(poll_interval)
+
+    print("⚠ autorouter startup timeout — continuing anyway")
+    return False
+
+
+
 def wait_for_instance_in_status(instance_id: str, timeout=5.0):
     """
     Ждет, пока запись об instance появится в файле ~/.mvp/status.
@@ -105,7 +143,7 @@ def add(component: str):
 
     with open(tmp_log_path, "ab") as out:
         process = subprocess.Popen(
-            [sys.executable, str(base_dir / "src" / "autorouter.py"), str(manifest_path), unique_id],
+            [sys.executable, "-u", str(base_dir / "src" / "autorouter.py"), str(manifest_path), unique_id],
             stdout=out,
             stderr=out,
             stdin=subprocess.DEVNULL,
@@ -113,6 +151,7 @@ def add(component: str):
             start_new_session=True
         )
 
+    tail_log_until_uvicorn_ready(tmp_log_path)
     pid = process.pid
     final_log_path = log_dir / f"{component_name}-{unique_id}-pid{pid}.log"
     tmp_log_path.rename(final_log_path)
