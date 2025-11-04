@@ -1,6 +1,7 @@
 import socket
 from pathlib import Path
 import json
+import inspect
 
 def find_free_port(start=8500, end=8999):
     for port in range(start, end + 1):
@@ -14,32 +15,36 @@ def find_free_port(start=8500, end=8999):
 
 
 
-def get_signatures(module, endpoints):
+def get_signatures(modules, endpoints):
     signatures = {}
+
     for fname in endpoints:
-        func = getattr(module, fname, None)
-        if not func:
-            continue
+        for module in modules:
+            func = getattr(module, fname, None)
+            if func:
+                sig = inspect.signature(func)
 
-        sig = inspect.signature(func)
+                args = {
+                    k: (
+                        f"{v.annotation.__name__} = {v.default!r}"
+                        if v.default is not inspect._empty
+                        else v.annotation.__name__
+                    ) if v.annotation != inspect._empty else "str"
+                    for k, v in sig.parameters.items()
+                }
 
-        args = {
-            k: getattr(v.annotation, "__name__", str(v.annotation)) if v.annotation != inspect._empty else "str"
-# this option disallows List and such
-#            k: str(v.annotation.__name__) if v.annotation != inspect._empty else "str"
-            for k, v in sig.parameters.items()
-        }
+                signatures[fname] = {
+                    "inputs": args,
+                    "returns": "JSON"
+                }
 
-        signatures[fname] = {
-            "inputs": args,
-            "returns": "JSON"
-        }
+                break  # нашли функцию — выходим из цикла по модулям
 
     return signatures
 
 
 
-def update_component_status(name, description, endpoints, port, module, instance_id):
+def update_component_status(name, description, endpoints, port, modules, instance_id):
     status_path = Path.home() / ".mvp" / "status"
     status_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -61,7 +66,7 @@ def update_component_status(name, description, endpoints, port, module, instance
         "endpoints": endpoints,
         "port": port,
         "ip": socket.gethostbyname(socket.gethostname()),
-        "io": get_signatures(module, endpoints)
+        "io": get_signatures(modules, endpoints)
     }
 
     updated = False
