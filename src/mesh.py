@@ -14,6 +14,31 @@ def find_free_port(start=8500, end=8999):
 
 
 
+def get_signatures(module, endpoints):
+    signatures = {}
+    for fname in endpoints:
+        func = getattr(module, fname, None)
+        if not func:
+            continue
+
+        sig = inspect.signature(func)
+
+        args = {
+            k: getattr(v.annotation, "__name__", str(v.annotation)) if v.annotation != inspect._empty else "str"
+# this option disallows List and such
+#            k: str(v.annotation.__name__) if v.annotation != inspect._empty else "str"
+            for k, v in sig.parameters.items()
+        }
+
+        signatures[fname] = {
+            "inputs": args,
+            "returns": "JSON"
+        }
+
+    return signatures
+
+
+
 def update_component_status(name, description, endpoints, port, module, instance_id):
     status_path = Path.home() / ".mvp" / "status"
     status_path.parent.mkdir(parents=True, exist_ok=True)
@@ -29,48 +54,26 @@ def update_component_status(name, description, endpoints, port, module, instance
     else:
         status = []
 
-    # Получаем сигнатуры входов/выходов для функций из этого компонента
-    io_signatures = {}
-    for fname in endpoints:
-        func = getattr(module, fname, None)
-        if not func:
-            continue
+    st = {
+        "name": name,
+        "id": instance_id,
+        "description": description,
+        "endpoints": endpoints,
+        "port": port,
+        "ip": socket.gethostbyname(socket.gethostname()),
+        "io": get_signatures(module, endpoints)
+    }
 
-        sig = inspect.signature(func)
-
-        args = {
-            k: getattr(v.annotation, "__name__", str(v.annotation)) if v.annotation != inspect._empty else "str"
-# this option disallows List and such
-#            k: str(v.annotation.__name__) if v.annotation != inspect._empty else "str"
-            for k, v in sig.parameters.items()
-        }
-
-        io_signatures[fname] = {
-            "inputs": args,
-            "returns": "JSON"
-        }
+    updated = False
 
     for entry in status:
         if entry.get("id") == instance_id:
-            entry.update({
-                "name": name,
-                "description": description,
-                "endpoints": endpoints,
-                "port": port,
-                "ip": socket.gethostbyname(socket.gethostname()),
-                "io": io_signatures
-            })
+            entry.update(st)
+            updated = True
             break
-    else:
-        status.append({
-            "id": instance_id,
-            "name": name,
-            "description": description,
-            "endpoints": endpoints,
-            "port": port,
-            "ip": socket.gethostbyname(socket.gethostname()),
-            "io": io_signatures
-        })
+    
+    if not updated:
+        status.append(st)
 
     with open(status_path, "w") as f:
         json.dump(status, f, indent=2)
