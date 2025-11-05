@@ -1,4 +1,0 @@
-name: cohere-qa
-description: Cohere answers a question
-endpoints:
-  - answer

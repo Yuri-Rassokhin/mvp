@@ -1,5 +1,0 @@
-name: llama-qa
-description: Llama-3.3-70 answers a question
-endpoints:
-  - answer
-  - debug
