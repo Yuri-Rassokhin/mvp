@@ -1,0 +1,6 @@
+name: mvp-manager
+description: System component for managing MVP mesh
+endpoints:
+  - add
+  - rm
+  - 'ls'

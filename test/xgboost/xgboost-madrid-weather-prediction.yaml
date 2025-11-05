@@ -1,5 +1,5 @@
 name: xgboost-prediction
-description: Trains XGBoost model to predict weather in Madrid
+description: Weather prediction in Madrid
 endpoints:
   - train
   - predict
