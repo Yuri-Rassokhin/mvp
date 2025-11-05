@@ -15,30 +15,50 @@ def find_free_port(start=8500, end=8999):
 
 
 
+def type_name(annotation):
+    try:
+        return annotation.__name__
+    except AttributeError:
+        return str(annotation).replace("typing.", "")
+
+
+
+import inspect
+from typing import Any
+
+def type_name(annotation: Any) -> str:
+    try:
+        return annotation.__name__
+    except AttributeError:
+        return str(annotation).replace("typing.", "")
+
+
+
 def get_signatures(modules, endpoints):
     signatures = {}
 
     for fname in endpoints:
+        func = None
         for module in modules:
             func = getattr(module, fname, None)
             if func:
-                sig = inspect.signature(func)
+                break  # нашли, дальше не ищем
 
-                args = {
-                    k: (
-                        f"{v.annotation.__name__} = {v.default!r}"
-                        if v.default is not inspect._empty
-                        else v.annotation.__name__
-                    ) if v.annotation != inspect._empty else "str"
-                    for k, v in sig.parameters.items()
-                }
+        if not func:
+            continue  # не нашли ни в одном модуле
 
-                signatures[fname] = {
-                    "inputs": args,
-                    "returns": "JSON"
-                }
+        sig = inspect.signature(func)
 
-                break  # нашли функцию — выходим из цикла по модулям
+        args = {
+            k: type_name(v.annotation) if v.annotation != inspect._empty else "str"
+            + (f" = {v.default!r}" if v.default != inspect._empty else "")
+            for k, v in sig.parameters.items()
+        }
+
+        signatures[fname] = {
+            "inputs": args,
+            "returns": "JSON"
+        }
 
     return signatures
 
