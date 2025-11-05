@@ -27,10 +27,10 @@ def get_url() -> str:
 def remove_instance(instance: str):
     try:
         ords_url = get_url()
-        url = f"{ords_url}/instance/{instance}"
+        url = f"{ords_url}{instance}"
         resp = requests.delete(url)
         if resp.status_code != 200:
-            typer.echo(f"⚠️ Failed to delete instance from DB: {resp.status_code} {resp.text}")
+            typer.echo(f"⚠️  Failed to delete instance from DB: {resp.status_code} {resp.text}")
     except Exception as e:
         typer.echo(f"⚠️  Exception during instance removal: {e}")
 
