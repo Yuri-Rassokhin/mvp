@@ -3,5 +3,4 @@ description: Weather prediction in Madrid
 endpoints:
   - train
   - predict
-start:
   - load

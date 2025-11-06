@@ -138,7 +138,7 @@ def add(component: str):
     log_dir.mkdir(parents=True, exist_ok=True)
 
     # Запускаем процесс — пока без PID
-    log_file_base = log_dir / f"{component_name}-{unique_id}"
+    log_file_base = log_dir / f"mvp-{unique_id}"
     tmp_log_path = log_file_base.with_suffix(".tmp")  # временный лог, до получения PID
 
     with open(tmp_log_path, "ab") as out:
@@ -153,7 +153,7 @@ def add(component: str):
 
     tail_log_until_uvicorn_ready(tmp_log_path)
     pid = process.pid
-    final_log_path = log_dir / f"{component_name}-{unique_id}-pid{pid}.log"
+    final_log_path = log_dir / f"mvp-{unique_id}-pid{pid}.log"
     tmp_log_path.rename(final_log_path)
 
     # 🔽 Ждем появления записи в статусе
@@ -290,21 +290,22 @@ from typing import List
 def call(
     target: str,
     endpoint: str,
-    json_parts: List[str] = typer.Argument(..., help="JSON payload split into parts (e.g. '{\"key\":', '\"value\"}')")
+    json_parts: Optional[List[str]] = typer.Argument(None, help="Optional JSON payload split into parts")
 ):
     """
-    Call an endpoint on a deployed instance (by ID or component name), passing JSON input.
+    Call an endpoint on a deployed instance (by ID or component name), optionally passing JSON input.
     """
     import requests
     import json
 
-    # склеиваем JSON
-    json_str = " ".join(json_parts)
-    try:
-        json_data = json.loads(json_str)
-    except json.JSONDecodeError as e:
-        typer.echo(f"❌ Invalid JSON: {e}")
-        raise typer.Exit(1)
+    json_data = None
+    if json_parts:
+        json_str = " ".join(json_parts)
+        try:
+            json_data = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            typer.echo(f"❌ Invalid JSON: {e}")
+            raise typer.Exit(1)
 
     # читаем статус
     status_path = Path.home() / ".mvp" / "status"
@@ -315,13 +316,8 @@ def call(
     with open(status_path, "r") as f:
         status = json.load(f)
 
-    # пробуем найти по ID
-    match = next((s for s in status if s.get("id") == target), None)
-
-    # если не нашли по ID — ищем по имени компонента
-    if not match:
-        match = next((s for s in status if s.get("name") == target), None)
-
+    # ищем по ID или имени
+    match = next((s for s in status if s.get("id") == target or s.get("name") == target), None)
     if not match:
         typer.echo(f"❌ No instance found with ID or name '{target}'")
         raise typer.Exit(1)
@@ -335,7 +331,6 @@ def call(
 
     try:
         resp = requests.post(url, json=json_data)
-#        typer.echo(f"✅ Response [{resp.status_code}]:\n{resp.text}")
         typer.echo(f"{resp.text}")
     except Exception as e:
         typer.echo(f"❌ Request failed: {e}")
