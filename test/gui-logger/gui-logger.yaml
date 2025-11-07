@@ -1,0 +1,6 @@
+name: gui-logger
+description: Web GUI that traces logs from given MVP components
+endpoints:
+  - gui
+  - attach
+  - detach
