@@ -33,9 +33,11 @@ def answer(question: str):
     choices = chat_response.data._chat_response._choices
     if choices:
         texts = [c._message._content[0]._text for c in choices if c._message._content]
-        return {"answer": texts[0] if texts else "[empty response]"}
+#        return {"answer": texts[0] if texts else "[empty response]"}
+        return texts[0] if texts else "[empty response]"
     else:
-        return {"answer": "[no choices]"}
+#        return {"answer": "[no choices]"}
+        return "[no answer]"
 
 def debug(question: str):
     compartment_id = "ocid1.compartment.oc1..aaaaaaaagz67e5f36rxph7l6xuolm7toexy3ylresvl2ijpxefj76db57dvq"
