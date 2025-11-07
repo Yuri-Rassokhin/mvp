@@ -1,0 +1,4 @@
+name: facilitator-dialogue
+description: Facilitates sequential dialogue of two LLMs
+endpoints:
+  - dialogue
