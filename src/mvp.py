@@ -88,6 +88,8 @@ def add(component: str):
     base_dir = Path(__file__).parent.parent.resolve()
     manifest_path = Path(component).expanduser().resolve()
 
+    manifest_dir = Path(component).parent.resolve()
+
     import subprocess
     import uuid
 
@@ -126,7 +128,7 @@ def add(component: str):
         typer.echo("⚠️  Warning: Manifest has no 'description'")
 
     # Install dependencies if requirements.txt is present
-    req_file = base_dir / "requirements.txt"
+    req_file = manifest_dir / "requirements.txt"
     if req_file.exists():
         typer.echo("installing dependencies")
         subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(req_file)], check=True)

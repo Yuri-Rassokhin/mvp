@@ -1,0 +1,6 @@
+typer
+PyYAML
+requests
+dotenv
+fastapi
+uvicorn
