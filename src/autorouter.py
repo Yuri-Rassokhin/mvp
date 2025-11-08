@@ -12,7 +12,7 @@ import os
 import inspect
 import importlib.util
 from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import (PlainTextResponse, StreamingResponse)
 from pydantic import create_model
 import yaml
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,10 +60,20 @@ app = FastAPI(title=component_name, description=description)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 modules = scan_and_import_endpoints(component_dir, allowed_funcs, start_funcs, app, component_root)
 
-@app.get("/internal/log", response_class=PlainTextResponse)
+@app.get("/output/log", response_class=PlainTextResponse)
 def get_log():
     result = subprocess.run(["mvp", "log", instance_id], capture_output=True, text=True)
     return result.stdout
+
+@app.get("/output/stream")
+def stream_log():
+    process = subprocess.Popen(["mvp", "log", instance_id, "-f"], stdout=subprocess.PIPE)
+
+    def event_stream():
+        for line in iter(process.stdout.readline, b''):
+            yield line.decode("utf-8")
+
+    return StreamingResponse(event_stream(), media_type="text/plain")
 
 port = find_free_port()
 update_component_status(component_name, description, list(allowed_funcs), port, modules, instance_id)

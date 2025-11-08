@@ -339,12 +339,10 @@ def call(
         raise typer.Exit(1)
 
 @app.command()
-def log(id: str):
+def log(id: str, follow: bool = typer.Option(False, "-f", "--follow", help="Follow the log output")):
     """
     Show log output of a specific component instance by ID.
     """
-    from pathlib import Path
-
     log_dir = Path.home() / ".mvp" / "logs"
     if not log_dir.exists():
         typer.echo("❌ Log directory not found")
@@ -357,10 +355,22 @@ def log(id: str):
         raise typer.Exit(1)
 
     log_file = matching_logs[0]
-    typer.echo(f"📄 Showing log: {log_file}\n{'─'*40}")
+#    typer.echo(f"📄 Showing log: {log_file}\n{'─'*40}")
+
     try:
         with open(log_file, "r") as f:
-            typer.echo(f.read())
+            if follow:
+                # Перемещаемся в конец файла
+                f.seek(0, 2)
+                while True:
+                    line = f.readline()
+                    if line:
+                        typer.echo(line, nl=False)
+                    else:
+                        time.sleep(0.2)
+            else:
+                # Однократный вывод
+                typer.echo(f.read())
     except Exception as e:
         typer.echo(f"❌ Failed to read log file: {e}")
         raise typer.Exit(1)
