@@ -21,8 +21,7 @@ def load_state():
 blocks = load_state()
 
 # Streamlit UI
-st.set_page_config(page_title="MVP GUI Desktop", layout="wide")
-st.title("🧠 MVP Desktop")
+st.set_page_config(page_title="MVP Desktop", layout="wide")
 
 html = """
 <style>
@@ -40,6 +39,23 @@ body {
     margin:0;
     overflow:hidden;
 '>
+
+<div id="desktop-title" style="
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 5em;
+    font-weight: bold;
+    font-family: sans-serif;
+    color: #000000;
+    opacity: 0.05;
+    z-index: 0;
+    pointer-events: none;
+">
+    MVP Desktop
+</div>
+
 """
 
 for i, block in enumerate(blocks):
