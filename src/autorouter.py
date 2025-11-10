@@ -23,7 +23,7 @@ import importlib.util
 from types import ModuleType
 from typing import Set, List
 from endpoints import (find_candidate_files, has_top_level_code, scan_and_import_endpoints)
-from mesh import (find_free_port, update_component_status)
+from mesh import (find_free_port, update_component_status, get_component_status)
 from modules import (load_and_register_module, is_safe_module, scan_and_register)
 
 
@@ -59,6 +59,23 @@ start_funcs = manifest.get("start", [])
 app = FastAPI(title=component_name, description=description)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 modules = scan_and_import_endpoints(component_dir, allowed_funcs, start_funcs, app, component_root)
+
+
+
+@app.get("/intro/manifest")
+def intro_manifest():
+    """
+    Возвращает runtime-манифест для текущего instance из ~/.mvp/status
+    """
+    global instance_id
+    print(f"Instance: {instance_id}")
+
+    try:
+        return get_component_status(instance_id)
+    except Exception as e:
+        return {"error": str(e)}
+
+
 
 @app.get("/output/log", response_class=PlainTextResponse)
 def get_log():

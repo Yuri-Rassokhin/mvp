@@ -13,6 +13,7 @@ from rich.table import Table
 from rich.console import Console
 from typing import Optional
 from server.oracle import add_instance, remove_instance
+from mesh import get_component_status
 import time
 
 app = typer.Typer(help="MVP CLI tool to manage lifecycle of a component mesh")
@@ -236,28 +237,8 @@ def ls(component: Optional[str] = None):
     Show status of a specific component or all deployed instances.
     """
     import json
-    status_path = Path.home() / ".mvp" / "status"
-    if not status_path.exists():
-        typer.echo("MVP registry is empty")
-        raise typer.Exit()
 
-    try:
-        with open(status_path, "r") as f:
-            raw = f.read().strip()
-            if not raw:
-                components = []
-            else:
-                components = json.loads(raw)
-            if not isinstance(components, list):
-                raise ValueError("status file must contain a list")
-    except Exception as e:
-        typer.echo(f"❌ Failed to load status file: {e}")
-        raise typer.Exit(1)
-
-    filtered = [
-        entry for entry in components
-        if component is None or entry.get("name") == component
-    ]
+    filtered = get_component_status(component)
 
     if not filtered:
         if component:
