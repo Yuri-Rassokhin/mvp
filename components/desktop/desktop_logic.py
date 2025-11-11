@@ -63,25 +63,13 @@ def render_component_block(comp):
 
 
 
-from desktop import desktop_state
-
-def render_gui():
-    global desktop_state
-
-    if not isinstance(desktop_state, list) or len(desktop_state) == 0:
+def render_gui(components):
+    if not components:
         st.info("No components attached yet.")
         return
 
-    for comp in desktop_state:
-        if not isinstance(comp, dict):
-            continue
+    for comp in components:
         render_component_block(comp)
 
 
 
-def main():
-    st.set_page_config(page_title="MVP Desktop", layout="wide")
-    st.markdown("<style>footer {visibility: hidden;}</style>", unsafe_allow_html=True)
-    render_gui()
-    time.sleep(1)
-    st.rerun()
