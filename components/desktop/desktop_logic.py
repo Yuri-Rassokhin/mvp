@@ -4,36 +4,6 @@ from pathlib import Path
 import requests
 import time
 
-STATE_FILE = Path.home() / ".mvp" / "gui-state.json"
-STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-
-
-def load_state():
-    if not STATE_FILE.exists():
-        return []
-
-    try:
-        with open(STATE_FILE, "r") as f:
-            raw = f.read().strip()
-            if not raw:
-                return []
-            state = json.loads(raw)
-            if isinstance(state, list):
-                return state
-    except json.JSONDecodeError:
-        pass
-    except Exception:
-        pass
-
-    # Если что-то пошло не так — удаляем файл
-    try:
-        STATE_FILE.unlink()
-    except Exception:
-        pass
-
-    return []
-
 
 
 def render_component_block(comp):
@@ -93,32 +63,19 @@ def render_component_block(comp):
 
 
 
+from desktop import desktop_state
+
 def render_gui():
-    if not STATE_FILE.exists():
+    global desktop_state
+
+    if not isinstance(desktop_state, list) or len(desktop_state) == 0:
         st.info("No components attached yet.")
         return
 
-    try:
-        with open(STATE_FILE, "r") as f:
-            raw = f.read().strip()
-            if not raw:
-                st.info("No components attached yet.")
-                return
-            blocks = json.loads(raw)
-            if not isinstance(blocks, list) or len(blocks) == 0:
-                st.info("No components attached yet.")
-                return
-
-        for comp in blocks:
-            if not isinstance(comp, dict):
-                continue
-            render_component_block(comp)
-
-    except json.JSONDecodeError:
-        st.warning("⚠️ GUI state file is empty or invalid. Try re-attaching components.")
-        return
-    except Exception as e:
-        st.error(f"Failed to load GUI state: {e}")
+    for comp in desktop_state:
+        if not isinstance(comp, dict):
+            continue
+        render_component_block(comp)
 
 
 

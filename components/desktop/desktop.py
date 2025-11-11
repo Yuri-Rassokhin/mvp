@@ -57,40 +57,38 @@ def cleanup():
 import json
 from pathlib import Path
 from typing import Dict
+
+import sys
+SRC_DIR = Path(__file__).resolve().parent.parent.parent / "src"
+sys.path.insert(0, str(SRC_DIR))
 from mesh import get_component_status
 
-STATE_FILE = Path.home() / ".mvp" / "gui-state.json"
-STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+
+desktop_state = []
+
+
 
 def attach(instance_id: str):
+    global desktop_state
+
     try:
         component = get_component_status(instance_id)
         if not component:
-            print(f"[attach] instance {instance_id} not found")
+            print(f"attaching to desktop: instance {instance_id} not found")
             return
 
-        # Загружаем текущее состояние GUI
-        if STATE_FILE.exists():
-            with open(STATE_FILE, "r") as f:
-                state = json.load(f)
-        else:
-            state = []
-
         # Если уже подключён — не дублируем
-        if any(entry.get("instance_id") == instance_id for entry in state):
-            print(f"[attach] instance {instance_id} already attached")
+        if any(entry.get("id") == instance_id for entry in desktop_state):
+            print(f"attaching to desktop: instance {instance_id} already attached")
             return
 
         # Добавляем компонент как блок
-        state.append(component)
-
-        with open(STATE_FILE, "w") as f:
-            json.dump(state, f, indent=2)
-
-        print(f"[attach] attached instance {instance_id}")
+        desktop_state.append(component)
+        print(f"instance {instance_id} attached")
 
     except Exception as e:
-        print(f"[attach] error: {e}")
+        print(f"error attaching instance {instance_id}: {e}")
 
 
 
