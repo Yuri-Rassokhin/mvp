@@ -8,8 +8,11 @@ import time
 
 PIPE_PATH = Path("/tmp/mvp_desktop_pipe")
 
+incoming = []
 
 def listen_pipe():
+    global incoming
+
     print("🔁 Pipe listener started")
     while True:
         try:
@@ -20,16 +23,22 @@ def listen_pipe():
                         continue
                     try:
                         comp = json.loads(line)
+                        
+                        if isinstance(comp, list):
+                            comp = comp[0]
+
                         with open("/tmp/mvp_desktop_debug.log", "a") as f:
-                            f.write(f"📥 Received via pipe: {st.session_state.components}\n")
+                            f.write(f"📥 Received via pipe: {comp}\n")
                         # Добавляем, если компонента с таким id еще нет
-                        if not any(c["id"] == comp["id"] for c in st.session_state.components):
-                            st.session_state.components.append(comp)
-                            st.session_state.redraw = True
-                            with open("/tmp/mvp_desktop_debug.log3", "a") as f:
-                                f.write(f"📥 Received via pipe: {st.session_state.components}\n")
+#                        if not any(c["id"] == comp["id"] for c in st.session_state.components):
+#                        st.session_state.components.append(comp)
+#                        st.session_state.redraw = True
+                        incoming.append(comp)   
+                        with open("/tmp/mvp_desktop_debug.log2", "a") as f:
+                            f.write(f"📥 Received via pipe: {incoming}\n")
                     except Exception as e:
-                        print(f"❌ Invalid pipe data: {e}")
+                        with open("/tmp/exception.log") as f:
+                            f.write(f"❌ Invalid pipe data: {e}")
         except Exception as outer:
             print(f"❌ Failed to open pipe: {outer}")
 
@@ -53,8 +62,9 @@ render_gui(st.session_state.components)
 
 while True:
     time.sleep(0.5)
-    if st.session_state.redraw:
-        st.session_state.redraw = False
-        render_gui(st.session_state.components)
-        st.rerun()
+    if incoming:
+        st.warning("HERE!")
+        render_gui(incoming)
+        incoming = []
+#        st.rerun()
 
