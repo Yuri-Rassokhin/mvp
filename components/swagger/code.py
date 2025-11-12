@@ -1,102 +1,86 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import uvicorn
-import asyncio
-import httpx
+import subprocess, json, httpx
 
-app = FastAPI(
-    title="MVP Swagger Desktop",
-    description="Attach components and view their logs in real-time.",
-    version="0.1.0"
-)
+app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# Allow local CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Memory store of attached instances
-attached_instances = set()
-
-class AttachRequest(BaseModel):
-    instance_id: str
+attached = {}
 
 @app.post("/attach")
-async def attach_component(req: AttachRequest):
-    attached_instances.add(req.instance_id)
-    return {"status": "attached", "instance_id": req.instance_id}
-
-@app.get("/", response_class=HTMLResponse)
-async def gui():
-    html = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>MVP Swagger Desktop</title>
-        <style>
-            body { font-family: sans-serif; margin: 20px; }
-            .block { border: 1px solid #aaa; padding: 10px; margin: 10px 0; border-radius: 6px; background: #f5f5f5; }
-            .log { background: black; color: lime; font-family: monospace; white-space: pre-wrap; padding: 5px; height: 150px; overflow-y: scroll; }
-        </style>
-    </head>
-    <body>
-        <h1>MVP Swagger Desktop</h1>
-        <input id="instance" placeholder="Enter instance_id"/>
-        <button onclick="attach()">Attach</button>
-        <div id="components"></div>
-
-        <script>
-        async function attach() {
-            const iid = document.getElementById("instance").value;
-            if (!iid) return;
-            await fetch("/attach", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ instance_id: iid })
-            });
-            const div = document.createElement("div");
-            div.className = "block";
-            div.id = `block-${iid}`;
-            div.innerHTML = `<h3>${iid}</h3><div class='log' id='log-${iid}'>Loading...</div>`;
-            document.getElementById("components").appendChild(div);
-        }
-
-        async function fetchLogs() {
-            const blocks = document.querySelectorAll(".log");
-            for (const block of blocks) {
-                const iid = block.id.replace("log-", "");
-                try {
-                    const r = await fetch(`/logs/${iid}`);
-                    const data = await r.json();
-                    block.textContent = data.log;
-                } catch (e) {
-                    block.textContent = `[error loading log]`;
-                }
-            }
-        }
-        setInterval(fetchLogs, 1000);
-        </script>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
+async def attach(req: Request):
+    data = await req.json()
+    iid = data.get("instance_id")
+    name = data.get("name")
+    port = data.get("port")
+    if iid and name and port:
+        attached[iid] = {"name": name, "port": port}
+    return {"status": "ok"}
 
 @app.get("/logs/{instance_id}")
-async def get_logs(instance_id: str):
+async def logs(instance_id: str):
+    comp = attached.get(instance_id)
+    if not comp:
+        return {"status": "error", "detail": "Not attached"}
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(f"http://localhost:8502/output/log", timeout=2.0)
-            r.raise_for_status()
-            return {"log": r.text.strip()}
+        r = httpx.get(f"http://127.0.0.1:{comp['port']}/output/log", timeout=2.0)
+        return {"status": "ok", "log": r.text}
     except Exception as e:
-        return JSONResponse(content={"log": f"[error: {e}]"}, status_code=500)
+        return {"status": "error", "detail": str(e)}
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8501)
+@app.get("/", response_class=HTMLResponse)
+async def ui():
+    try:
+        out = subprocess.check_output(["mvp", "call", "mvp-manager", "ls", "{}"], text=True)
+        comps = json.loads(out)["components"]
+    except:
+        comps = []
+
+    opts = "\n".join([
+        f"<option value='{c['id']}' data-name='{c['name']}' data-port='{c['port']}'>{c['name']} ({c['id'][:6]})</option>"
+        for c in comps
+    ])
+
+    html = f"""
+    <html><head><title>MVP Log Viewer</title>
+    <script>
+    let attached = {{}};
+    function attach() {{
+        const sel = document.getElementById("sel");
+        const id = sel.value;
+        const name = sel.options[sel.selectedIndex].dataset.name;
+        const port = sel.options[sel.selectedIndex].dataset.port;
+        if (attached[id]) return;
+        fetch("/attach", {{
+            method: "POST",
+            headers: {{"Content-Type": "application/json"}},
+            body: JSON.stringify({{instance_id: id, name: name, port: port}})
+        }}).then(() => {{
+            attached[id] = true;
+            const div = document.createElement("div");
+            div.innerHTML = "<h4>" + name + "</h4><pre id='log-" + id + "'>loading...</pre>";
+            document.getElementById("logs").appendChild(div);
+        }});
+    }}
+    function refresh() {{
+        for (const id in attached) {{
+            fetch("/logs/" + id)
+                .then(r => r.json())
+                .then(d => {{
+                    if (d.status === "ok")
+                        document.getElementById("log-" + id).textContent = d.log;
+                }});
+        }}
+    }}
+    setInterval(refresh, 1000);
+    </script></head>
+    <body>
+    <h2>MVP Component Logs</h2>
+    <select id="sel">{opts}</select>
+    <button onclick="attach()">Attach</button>
+    <div id="logs"></div>
+    </body></html>
+    """
+    return HTMLResponse(content=html)
 
