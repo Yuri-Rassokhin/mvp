@@ -2,7 +2,6 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import subprocess, json, httpx
-from pathlib import Path
 from ui_template import html_template
 
 app = FastAPI()
@@ -16,8 +15,9 @@ async def attach(req: Request):
     iid = data.get("instance_id")
     name = data.get("name")
     port = data.get("port")
+    io = data.get("io")
     if iid and name and port:
-        attached[iid] = {"name": name, "port": port}
+        attached[iid] = {"name": name, "port": port, "io": io}
     return {"status": "ok"}
 
 @app.get("/logs/{instance_id}")
@@ -28,6 +28,18 @@ async def logs(instance_id: str):
     try:
         r = httpx.get(f"http://127.0.0.1:{comp['port']}/output/log", timeout=2.0)
         return {"status": "ok", "log": r.text}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+@app.post("/call/{instance_id}/{endpoint}")
+async def call(instance_id: str, endpoint: str, req: Request):
+    comp = attached.get(instance_id)
+    if not comp:
+        return {"status": "error", "detail": "Not attached"}
+    try:
+        data = await req.json()
+        r = httpx.post(f"http://127.0.0.1:{comp['port']}/{endpoint}", json=data, timeout=4.0)
+        return {"status": "ok", "result": r.json()}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
 

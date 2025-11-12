@@ -1,125 +1,197 @@
-html_template = """<html>
+from textwrap import dedent
+
+# HTML template with fixed context menu behavior and endpoint form generation
+html_template = dedent("""
+<!DOCTYPE html>
+<html>
 <head>
-  <title>MVP Log Viewer</title>
+  <title>MVP Component Logs</title>
   <style>
-    body { font-family: sans-serif; }
-    .component-box {
-        position: absolute;
-        top: 100px;
-        left: 100px;
-        width: 400px;
-        max-height: 75vh;
-        padding: 10px;
-        background: #eef;
-        border: 1px solid #88f;
-        border-radius: 10px;
-        resize: both;
-        overflow: auto;
-        box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
+    body {
+      font-family: sans-serif;
     }
-    #contextMenu {
-        position: absolute;
-        display: none;
-        z-index: 1000;
-        width: 220px;
-        background: white;
-        border: 1px solid #ccc;
-        border-radius: 6px;
-        box-shadow: 2px 2px 6px rgba(0,0,0,0.15);
+    #logs {
+      margin-top: 20px;
     }
-    #contextMenu div {
-        padding: 8px 12px;
-        cursor: pointer;
+    .component {
+      position: absolute;
+      background-color: #f0f0f0;
+      border: 1px solid #ccc;
+      padding: 10px;
+      border-radius: 10px;
+      width: 300px;
+      max-height: 75vh;
+      overflow-y: auto;
+      resize: both;
     }
-    #contextMenu div:hover {
-        background: #eef;
+    .context-menu {
+      position: absolute;
+      display: none;
+      background: #fff;
+      border: 1px solid #ccc;
+      z-index: 1000;
+      box-shadow: 2px 2px 6px rgba(0,0,0,0.2);
+    }
+    .context-menu button {
+      display: block;
+      width: 100%;
+      padding: 5px 10px;
+      border: none;
+      background: none;
+      text-align: left;
+    }
+    .context-menu button:hover {
+      background-color: #eef;
+    }
+    input, button, select, textarea {
+      font-family: inherit;
+      font-size: 1em;
+    }
+    textarea {
+      width: 100%;
+      height: 150px;
     }
   </style>
 </head>
 <body>
-  <h2>MVP Component Logs</h2>
-  <div id="logs"></div>
-  <div id="contextMenu"></div>
+<h2>MVP Component Logs</h2>
+<div id="logs"></div>
+<div id="menu" class="context-menu"></div>
+<script>
+  const components = __COMPONENTS_JSON__;
+  const attached = {};
+  let contextTargetId = null;
 
-  <script>
-    let components = __COMPONENTS_JSON__;
-    let attached = {};
+  function attachComponent(comp) {
+    if (attached[comp.id]) return;
 
-    document.addEventListener("contextmenu", function(event) {
-        event.preventDefault();
-        const menu = document.getElementById("contextMenu");
-        menu.innerHTML = "";
-        components.forEach(comp => {
-            const item = document.createElement("div");
-            item.textContent = comp.name + " (" + comp.id.slice(0,6) + ")";
-            item.onclick = function() { attach(comp); menu.style.display = "none"; };
-            menu.appendChild(item);
-        });
-        menu.style.left = event.pageX + "px";
-        menu.style.top = event.pageY + "px";
-        menu.style.display = "block";
+    const div = document.createElement("div");
+    div.className = "component";
+    div.style.top = Math.random() * 400 + "px";
+    div.style.left = Math.random() * 600 + "px";
+    div.setAttribute("data-id", comp.id);
+
+    const header = document.createElement("h4");
+    header.textContent = comp.name + " (" + comp.id.slice(0, 6) + ")";
+    div.appendChild(header);
+
+    const pre = document.createElement("pre");
+    pre.id = "log-" + comp.id;
+    pre.textContent = "Right-click to select endpoint";
+    div.appendChild(pre);
+
+    makeDraggable(div);
+    document.getElementById("logs").appendChild(div);
+    attached[comp.id] = {div, comp};
+  }
+
+  function makeDraggable(el) {
+    el.onmousedown = function (e) {
+      if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+      let offsetX = e.clientX - el.offsetLeft;
+      let offsetY = e.clientY - el.offsetTop;
+
+      function move(e) {
+        el.style.left = (e.clientX - offsetX) + 'px';
+        el.style.top = (e.clientY - offsetY) + 'px';
+      }
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', () => {
+        document.removeEventListener('mousemove', move);
+      }, { once: true });
+    }
+  }
+
+  function showContextMenu(e, id) {
+    e.preventDefault();
+    const comp = attached[id].comp;
+    const menu = document.getElementById("menu");
+    menu.innerHTML = "";
+    comp.endpoints.forEach(ep => {
+      const btn = document.createElement("button");
+      btn.textContent = ep;
+      btn.onclick = () => {
+        renderEndpointForm(id, ep);
+        menu.style.display = "none";
+      };
+      menu.appendChild(btn);
+    });
+    menu.style.left = e.pageX + "px";
+    menu.style.top = e.pageY + "px";
+    menu.style.display = "block";
+  }
+
+  function renderEndpointForm(id, endpoint) {
+    const comp = attached[id].comp;
+    const div = attached[id].div;
+    div.innerHTML = `<h4>${comp.name} (${id.slice(0,6)}) — ${endpoint}</h4>`;
+
+    const form = document.createElement("form");
+    const inputs = comp.io?.[endpoint]?.inputs || {};
+    const inputValues = {};
+
+    Object.entries(inputs).forEach(([name, type]) => {
+      const label = document.createElement("label");
+      label.textContent = name + " (" + type + "):";
+      const input = document.createElement("textarea");
+      input.name = name;
+      input.placeholder = `Enter ${type}...`;
+      form.appendChild(label);
+      form.appendChild(document.createElement("br"));
+      form.appendChild(input);
+      form.appendChild(document.createElement("br"));
     });
 
-    document.addEventListener("click", function() {
-        document.getElementById("contextMenu").style.display = "none";
-    });
+    const submit = document.createElement("button");
+    submit.type = "submit";
+    submit.textContent = "Call";
+    form.appendChild(submit);
 
-    function attach(comp) {
-        if (attached[comp.id]) return;
-        fetch("/attach", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({
-                instance_id: comp.id,
-                name: comp.name,
-                port: comp.port
-            })
-        }).then(() => {
-            attached[comp.id] = true;
-            const div = document.createElement("div");
-            div.className = "component-box";
-            div.innerHTML = "<h4>" + comp.name + "</h4><pre id='log-" + comp.id + "'>loading...</pre>";
-            document.getElementById("logs").appendChild(div);
-            makeDraggable(div);
-        });
-    }
+    const output = document.createElement("pre");
+    output.id = "result-" + id;
+    output.textContent = "Result will appear here";
 
-    function refresh() {
-        for (const id in attached) {
-            fetch("/logs/" + id)
-                .then(r => r.json())
-                .then(d => {
-                    if (d.status === "ok")
-                        document.getElementById("log-" + id).textContent = d.log;
-                });
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const payload = {};
+      const data = new FormData(form);
+      for (const [key, val] of data.entries()) {
+        try {
+          payload[key] = JSON.parse(val);
+        } catch {
+          payload[key] = val;
         }
-    }
-    setInterval(refresh, 1000);
+      }
+      fetch(`http://127.0.0.1:${comp.port}/${endpoint}`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      }).then(r => r.json())
+        .then(data => output.textContent = JSON.stringify(data, null, 2))
+        .catch(err => output.textContent = "Error: " + err);
+    };
 
-    function makeDraggable(el) {
-        let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
-        el.onmousedown = dragMouseDown;
-        function dragMouseDown(e) {
-            e.preventDefault();
-            pos3 = e.clientX;
-            pos4 = e.clientY;
-            document.onmouseup = closeDragElement;
-            document.onmousemove = elementDrag;
-        }
-        function elementDrag(e) {
-            pos1 = pos3 - e.clientX;
-            pos2 = pos4 - e.clientY;
-            pos3 = e.clientX;
-            pos4 = e.clientY;
-            el.style.top = (el.offsetTop - pos2) + "px";
-            el.style.left = (el.offsetLeft - pos1) + "px";
-        }
-        function closeDragElement() {
-            document.onmouseup = null;
-            document.onmousemove = null;
-        }
+    div.appendChild(form);
+    div.appendChild(output);
+  }
+
+  document.addEventListener("contextmenu", e => {
+    const box = e.target.closest(".component");
+    if (box) {
+      const id = box.getAttribute("data-id");
+      showContextMenu(e, id);
+    } else {
+      document.getElementById("menu").style.display = "none";
     }
-  </script>
+  });
+
+  window.addEventListener("click", () => {
+    document.getElementById("menu").style.display = "none";
+  });
+
+  components.forEach(attachComponent);
+</script>
 </body>
-</html>"""
+</html>
+""")
 
