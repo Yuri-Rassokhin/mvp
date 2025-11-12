@@ -1,9 +1,9 @@
-import streamlit.components.v1 as components
+from streamlit.components.v1 import html
+from desktop_logic import get_component_html
 
 
-
-def render_desktop_background(blocks):
-    html = """
+def render_desktop_background(components):
+    html_content = """
     <style>
     body {
         background-color: white;
@@ -37,34 +37,35 @@ def render_desktop_background(blocks):
     </div>
     """
 
-    for i, block in enumerate(blocks):
-        html += f"""
+    for i, comp in enumerate(components):
+        comp_html = get_component_html(comp).replace("\n", " ").replace('"', '&quot;')
+
+        html_content += f"""
             <div id='block-{i}' style="
-            position:absolute;
-            top:{50+i*70}px;
-            left:{50+i*100}px;
-            width:300px;
-            padding:10px;
-            background:#f0f8ff;
-            border:1px solid #ccc;
-            box-shadow: 2px 2px 6px rgba(0,0,0,0.1);
-            border-radius: 8px;
-            cursor:move;
-            font-family: sans-serif;
-            z-index:10;
-            resize: both;
-            overflow: auto;
+                position:absolute;
+                top:{50+i*70}px;
+                left:{50+i*100}px;
+                width:400px;
+                padding:10px;
+                background:#f0f8ff;
+                border:1px solid #ccc;
+                box-shadow: 2px 2px 6px rgba(0,0,0,0.1);
+                border-radius: 8px;
+                cursor:move;
+                font-family: sans-serif;
+                z-index:10;
+                resize: both;
+                overflow: auto;
             "
             onmousedown="dragElement(this)"
         >
-            <div style='font-weight:normal;font-size:medium;'>{block}</div>
-            <div style='font-size:smaller;color:#444;'>[log output will go here]</div>
+            {comp_html}
         </div>
         """
 
-    html += """
-    </div>
+    html_content += "</div>"
 
+    html_content += """
     <script>
     function dragElement(elmnt) {
       let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
@@ -96,6 +97,6 @@ def render_desktop_background(blocks):
     </script>
     """
 
+    html(html_content, height=850, scrolling=True)
 
-    components.html(html, height=850, scrolling=True)
 

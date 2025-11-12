@@ -3,6 +3,51 @@ import json
 from pathlib import Path
 import requests
 import time
+import html
+
+def get_component_html(comp):
+    comp_id = comp["id"]
+    comp_name = html.escape(comp["name"])
+    endpoints = comp.get("endpoints", [])
+    io = comp.get("io", {})
+
+    endpoint_options = "".join(
+        f"<option value='{ep}'>{ep}</option>" for ep in endpoints
+    )
+
+    html_block = f"""
+    <div style="font-family:sans-serif;">
+        <div style="font-size:1.1em; font-weight:bold; margin-bottom:6px;">
+            🔧 {comp_name} ({comp_id[:6]})
+        </div>
+
+        <label for="ep-{comp_id}">Endpoint:</label>
+        <select id="ep-{comp_id}" onchange="handleEndpointChange('{comp_id}')" style="margin-bottom:10px;">
+            {endpoint_options}
+        </select>
+
+        <div id="params-{comp_id}" style="margin-top:10px; font-size:0.9em; color:#444;">
+            <!-- Inputs will be injected here -->
+        </div>
+
+        <button onclick="runComponent('{comp_id}')" style="
+            margin-top:10px;
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 6px 12px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 0.9em;
+            border-radius: 4px;
+            cursor: pointer;
+        ">▶️ Run</button>
+
+        <pre id="result-{comp_id}" style="margin-top:10px; background:#f8f8f8; padding:6px; border-radius:4px; max-height:200px; overflow:auto;"></pre>
+    </div>
+    """
+    return html_block
 
 
 
