@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import subprocess, json, httpx
 from pathlib import Path
+from ui_template import html_template
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -38,13 +39,6 @@ async def ui():
     except:
         comps = []
 
-    opts = "\n".join([
-        f"<option value='{c['id']}' data-name='{c['name']}' data-port='{c['port']}'>{c['name']} ({c['id'][:6]})</option>"
-        for c in comps
-    ])
-
-    template_path = Path(__file__).parent / "viewer_template.html"
-    template = template_path.read_text()
-    html = template.replace("{options}", opts)
+    html = html_template.replace("__COMPONENTS_JSON__", json.dumps(comps))
     return HTMLResponse(content=html)
 
