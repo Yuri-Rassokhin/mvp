@@ -1,6 +1,6 @@
 from textwrap import dedent
 
-# HTML template with fixed context menu behavior and endpoint form generation
+# HTML template with enhanced styles: blue components, thicker borders, box-sizing, and hover effects
 html_template = dedent("""
 <!DOCTYPE html>
 <html>
@@ -15,14 +15,20 @@ html_template = dedent("""
     }
     .component {
       position: absolute;
-      background-color: #f0f0f0;
-      border: 1px solid #ccc;
+      background-color: #e0f0ff;
+      border: 3px solid #3399ff;
       padding: 10px;
       border-radius: 10px;
       width: 300px;
       max-height: 75vh;
       overflow-y: auto;
       resize: both;
+      box-sizing: border-box;
+      transition: box-shadow 0.2s ease, transform 0.1s ease;
+    }
+    .component:hover {
+      box-shadow: 0 0 10px rgba(0, 128, 255, 0.5);
+      transform: scale(1.01);
     }
     .context-menu {
       position: absolute;
@@ -183,10 +189,6 @@ html_template = dedent("""
     } else {
       document.getElementById("menu").style.display = "none";
     }
-  });
-
-  window.addEventListener("click", () => {
-    document.getElementById("menu").style.display = "none";
   });
 
   components.forEach(attachComponent);
