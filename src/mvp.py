@@ -289,6 +289,8 @@ def call(
         except json.JSONDecodeError as e:
             typer.echo(f"❌ Invalid JSON: {e}")
             raise typer.Exit(1)
+    else:
+        json_data = {}
 
     # читаем статус
     status_path = Path.home() / ".mvp" / "status"
