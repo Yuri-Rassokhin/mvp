@@ -5,7 +5,7 @@ html_template = dedent("""
 <!DOCTYPE html>
 <html>
 <head>
-  <title>MVP Component Logs</title>
+  <title>MVP Desktop</title>
   <style>
     body {
       font-family: sans-serif;
@@ -28,7 +28,7 @@ html_template = dedent("""
     }
     .component:hover {
       box-shadow: 0 0 10px rgba(0, 128, 255, 0.5);
-      transform: scale(1.01);
+      //transform: scale(1.01);
     }
     .context-menu {
       position: absolute;
@@ -60,7 +60,7 @@ html_template = dedent("""
   </style>
 </head>
 <body>
-<h2>MVP Component Logs</h2>
+<h2>MVP Desktop</h2>
 <div id="logs"></div>
 <div id="menu" class="context-menu"></div>
 <script>
@@ -157,25 +157,32 @@ html_template = dedent("""
     output.id = "result-" + id;
     output.textContent = "Result will appear here";
 
-    form.onsubmit = (e) => {
-      e.preventDefault();
-      const payload = {};
-      const data = new FormData(form);
-      for (const [key, val] of data.entries()) {
-        try {
-          payload[key] = JSON.parse(val);
-        } catch {
-          payload[key] = val;
-        }
-      }
-      fetch(`http://127.0.0.1:${comp.port}/${endpoint}`, {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify(payload)
-      }).then(r => r.json())
-        .then(data => output.textContent = JSON.stringify(data, null, 2))
-        .catch(err => output.textContent = "Error: " + err);
-    };
+form.onsubmit = (e) => {
+  e.preventDefault();
+  const payload = {};
+  const data = new FormData(form);
+
+  for (const [key, val] of data.entries()) {
+    try {
+      payload[key] = JSON.parse(val);
+    } catch {
+      payload[key] = val;
+    }
+  }
+
+  const jsonPayload = Object.keys(payload).length > 0 ? payload : {};
+
+  fetch(`http://127.0.0.1:${comp.port}/${endpoint}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(jsonPayload)
+  })
+    .then(r => r.json())
+    .then(data => output.textContent = JSON.stringify(data, null, 2))
+    .catch(err => output.textContent = "Error: " + err);
+};
 
     div.appendChild(form);
     div.appendChild(output);
