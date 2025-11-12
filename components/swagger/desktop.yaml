@@ -1,0 +1,6 @@
+name: mvp-desktop
+description: web-based desktop for MVP
+endpoints:
+  - desktop
+start:
+  - start_ux
