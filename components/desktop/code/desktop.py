@@ -8,6 +8,8 @@ import atexit
 import subprocess
 SRC_DIR = Path(__file__).resolve().parent.parent.parent.parent / "src"
 sys.path.insert(0, str(SRC_DIR))
+SRC_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SRC_DIR))
 from mesh import get_component_status
 from desktop_pipe import (send_to_desktop, start_streamlit)
 
