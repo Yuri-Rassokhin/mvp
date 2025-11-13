@@ -1,0 +1,5 @@
+name: qa-assistant-llama
+description: Question answering using Llama
+endpoints:
+  - answer
+  - debug

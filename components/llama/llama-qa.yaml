@@ -1,5 +1,0 @@
-name: llama-qa
-description: Question answering
-endpoints:
-  - answer
-  - debug

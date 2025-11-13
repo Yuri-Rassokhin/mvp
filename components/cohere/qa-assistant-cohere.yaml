@@ -1,0 +1,5 @@
+name: qa-assistant-cohere
+description: Question answering using Cohere
+endpoints:
+  - answer
+  - debug

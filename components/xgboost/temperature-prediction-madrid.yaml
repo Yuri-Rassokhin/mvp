@@ -1,0 +1,6 @@
+name: temperature-prediction-madrid
+description: Predict average temperature in Madrid
+endpoints:
+  - train
+  - predict
+  - load

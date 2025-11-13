@@ -1,5 +1,0 @@
-name: cohere-qa
-description: Question answering
-endpoints:
-  - answer
-  - debug

@@ -1,6 +1,0 @@
-name: xgboost-prediction
-description: Weather prediction in Madrid
-endpoints:
-  - train
-  - predict
-  - load
