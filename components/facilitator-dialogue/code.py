@@ -2,7 +2,7 @@ import subprocess
 import json
 import time
 
-rounds = 100
+rounds = 10
 
 def dialogue(model_a: str, model_b: str, initial_prompt: str):
     """
