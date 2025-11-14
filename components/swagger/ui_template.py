@@ -92,14 +92,17 @@ html_template = dedent("""
       box-sizing: border-box;
       border: none;
       outline: none;
-      background-color: white;
+      background-color: #f0f0f0;  /* легкий серый для неактивного состояния */
+      color: #000;
       padding: 4px;
       border-radius: 4px;
-      transition: border 0.2s ease;
+      transition: all 0.2s ease;
     }
+    /* При фокусе — делаем фон белым и добавляем тонкую рамку */
     textarea:focus {
-      border: 1px solid #5468C9;  /* цвет как у .component */
-    }
+      background-color: white;
+      border: 1px solid #5468C9;
+    }   
   </style>
 </head>
 <body>
