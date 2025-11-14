@@ -35,11 +35,16 @@ html_template = dedent("""
       border-radius: 10px;
       width: 300px;
       max-height: 75vh;
-      overflow-y: auto;
+      overflow-y: scroll;
+      scrollbar-width: none; /* Firefox */
+      -ms-overflow-style: none;  /* IE 10+ */
       resize: both;
       box-sizing: border-box;
       transition: box-shadow 0.2s ease, transform 0.1s ease;
       box-shadow: 4px 4px 10px rgba(0, 0, 0, 0.15);
+    }
+    .component::-webkit-scrollbar {
+         display: none;  /* Chrome, Safari */
     }
     .component:hover {
       box-shadow: 0 0 12px rgba(0, 128, 255, 0.5);
@@ -71,6 +76,7 @@ html_template = dedent("""
     textarea {
       width: 100%;
       height: 150px;
+      resize: none;
     }
     h1.depth-title {
       position: absolute;
