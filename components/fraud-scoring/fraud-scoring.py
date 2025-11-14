@@ -4,16 +4,19 @@ from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
 from sklearn.metrics import roc_auc_score
 import numpy as np
+from typing import Dict
 
 model = None
+encoders = None
 X_train, X_test, y_train, y_test, X = None, None, None, None, None
 
 def train():
     global model
+    global encoders
     global X_train, X_test, y_train, y_test, X
 
     # 1. Загрузка
-    df = pd.read_csv("PS_20174392719_1491204439457_log.csv")
+    df = pd.read_csv("/home/ubuntu/mvp/components/fraud-scoring/PS_20174392719_1491204439457_log.csv")
 
     # 2. Базовая подготовка
     y = df["isFraud"]
@@ -44,6 +47,14 @@ def train():
 
     model.fit(X_train, y_train)
 
+    for col in X.select_dtypes(include=["object"]).columns:
+        le = LabelEncoder()
+        X[col] = le.fit_transform(X[col])
+        encoders[col] = le
+
+    with open("/tmp/log", "a") as f:
+        f.write(f"{encoders}")
+
     return {"status": "trained"}
 
 def quality():
@@ -65,4 +76,24 @@ def influence():
         res[name] = float(score)
 
     return res
+
+
+
+def score(transaction: Dict):
+    global model
+    global encoders
+
+    import pandas as pd
+
+    # Превращаем транзакцию в DataFrame
+    row = pd.DataFrame([transaction])
+
+    # Применяем те же LabelEncoder'ы
+    for col, le in encoders.items():
+        if col in row:
+            row[col] = le.transform([row[col].iloc[0]])
+
+    # Предикт: вероятность fraud
+    proba = model.predict_proba(row)[0][1]
+    return {"score": float(proba)}
 
