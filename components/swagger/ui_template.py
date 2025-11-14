@@ -55,7 +55,7 @@ html_template = dedent("""
       display: none;
       background: #fff;
       border: 1px solid #ccc;
-      z-index: 1000;
+      z-index: 9999;
       box-shadow: 2px 2px 6px rgba(0,0,0,0.2);
     }
     .context-menu button {
