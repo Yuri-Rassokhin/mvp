@@ -262,8 +262,11 @@ def ls(component: Optional[str] = None):
             for ep in endpoints:
                 sig = io.get(ep, {})
                 inputs = sig.get("inputs", {})
-                arg_str = ", ".join(f"\"{k}\": {v}" for k, v in inputs.items()) if inputs else ""
-                typer.echo(f"http://{ip}:{port}/{ep}, {arg_str}")
+                if inputs:
+                    arg_str = ", ".join(f"\"{k}\": {v}" for k, v in inputs.items())
+                    typer.echo(f"http://{ip}:{port}/{ep} {{ {arg_str} }}")
+                else:
+                    typer.echo(f"http://{ip}:{port}/{ep}")
         else:
             typer.echo("URL not found")
 
