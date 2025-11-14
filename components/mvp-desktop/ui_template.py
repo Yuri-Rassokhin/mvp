@@ -128,6 +128,7 @@ function attachComponent(comp, x = null, y = null, width = 300) {
   const headerText = comp.name + " (" + comp.id.slice(0, 6) + ")";
   const header = document.createElement("h4");
   header.textContent = headerText;
+  header.style.textAlign = "center";
   div.appendChild(header);
 
   // ✅ Вычисляем ширину текста
@@ -211,13 +212,13 @@ function makeDraggable(el) {
     const comp = attached[id].comp;
     const div = attached[id].div;
 
-    div.innerHTML = `
-      <h4 style="line-height: 1.2em;">
-        ${comp.name} (${id.slice(0,6)})<br>
-        <div style="text-align: center; font-weight: normal; font-style: italic; font-size: 0.95em; margin-top: 0.2em;">
-          ${endpoint}
-        </div>
-      </h4>`;
+  div.innerHTML = `
+    <h4 style="line-height: 1.2em; text-align: center;">
+      ${comp.name} (${id.slice(0,6)})
+    </h4>
+    <div style="text-align: center; font-weight: normal; font-style: italic; font-size: 0.95em; margin-top: -0.3em; margin-bottom: 0.6em;">
+      ${endpoint}
+    </div>`;
 
     const form = document.createElement("form");
     const inputs = comp.io?.[endpoint]?.inputs || {};
