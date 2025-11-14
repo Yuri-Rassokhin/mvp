@@ -1,6 +1,6 @@
 from textwrap import dedent
 
-# HTML template with enhanced styles: blue components, thicker borders, box-sizing, and hover effects
+# HTML template with soft gradient background, depth effect, centered title, and aligned result width
 html_template = dedent("""
 <!DOCTYPE html>
 <html>
@@ -8,11 +8,36 @@ html_template = dedent("""
   <title>MVP Desktop</title>
   <style>
     body {
+      margin: 0;
       font-family: sans-serif;
+      height: 100vh;
+      background: linear-gradient(to bottom, #f0f4ff, #dce3f0);
+      background-image: radial-gradient(circle at 60% 20%, rgba(255,255,255,0.3), transparent 60%),
+                        radial-gradient(circle at 30% 70%, rgba(200,200,255,0.2), transparent 50%),
+                        linear-gradient(to top left, rgba(240,240,255,0.1), transparent 70%);
+      background-repeat: no-repeat;
+      background-size: cover;
+      position: relative;
+      overflow: hidden;
     }
+
     #logs {
       margin-top: 20px;
     }
+
+    .title {
+      position: absolute;
+      top: 30%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 64px;
+      font-weight: bold;
+      color: rgba(50, 50, 100, 0.1);
+      text-shadow: 0px 15px 15px rgba(0,0,0,0.15);
+      pointer-events: none;
+      z-index: 0;
+    }
+
     .component {
       position: absolute;
       background-color: #A5CAFF;
@@ -25,11 +50,14 @@ html_template = dedent("""
       resize: both;
       box-sizing: border-box;
       transition: box-shadow 0.2s ease, transform 0.1s ease;
+      z-index: 1;
     }
+
     .component:hover {
-      //box-shadow: 0 0 10px rgba(0, 128, 255, 0.5);
-      //transform: scale(1.01);
+      box-shadow: 0 0 10px rgba(0, 128, 255, 0.4);
+      transform: scale(1.01);
     }
+
     .context-menu {
       position: absolute;
       display: none;
@@ -38,6 +66,7 @@ html_template = dedent("""
       z-index: 1000;
       box-shadow: 2px 2px 6px rgba(0,0,0,0.2);
     }
+
     .context-menu button {
       display: block;
       width: 100%;
@@ -46,21 +75,31 @@ html_template = dedent("""
       background: none;
       text-align: left;
     }
+
     .context-menu button:hover {
       background-color: #eef;
     }
+
     input, button, select, textarea {
       font-family: inherit;
       font-size: 1em;
     }
+
     textarea {
       width: 100%;
       height: 150px;
     }
+
+    pre.output {
+      width: 100%;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
   </style>
 </head>
 <body>
-<h2>MVP Desktop</h2>
+<div class="title">MVP Desktop</div>
 <div id="logs"></div>
 <div id="menu" class="context-menu"></div>
 <script>
@@ -134,7 +173,6 @@ html_template = dedent("""
 
     const form = document.createElement("form");
     const inputs = comp.io?.[endpoint]?.inputs || {};
-    const inputValues = {};
 
     Object.entries(inputs).forEach(([name, type]) => {
       const label = document.createElement("label");
@@ -155,36 +193,31 @@ html_template = dedent("""
 
     const output = document.createElement("pre");
     output.id = "result-" + id;
+    output.className = "output";
     output.textContent = "Result will appear here";
 
-form.onsubmit = (e) => {
-  e.preventDefault();
-  const payload = {};
-  const data = new FormData(form);
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const payload = {};
+      const data = new FormData(form);
+      for (const [key, val] of data.entries()) {
+        try {
+          payload[key] = JSON.parse(val);
+        } catch {
+          payload[key] = val;
+        }
+      }
+      const jsonPayload = Object.keys(payload).length > 0 ? payload : {};
 
-  for (const [key, val] of data.entries()) {
-    try {
-      payload[key] = JSON.parse(val);
-    } catch {
-      payload[key] = val;
-    }
-  }
-
-  const jsonPayload = Object.keys(payload).length > 0 ? payload : {};
-
-  console.log("Calling:", `/proxy/${comp.port}/${endpoint}`, "with:", payload);
-
-  fetch(`/proxy/${comp.port}/${endpoint}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(jsonPayload)
-  })
-    .then(r => r.json())
-    .then(data => output.textContent = JSON.stringify(data, null, 2))
-    .catch(err => output.textContent = "Error: " + err);
-};
+      fetch(`/proxy/${comp.port}/${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(jsonPayload)
+      })
+        .then(r => r.json())
+        .then(data => output.textContent = JSON.stringify(data, null, 2))
+        .catch(err => output.textContent = "Error: " + err);
+    };
 
     div.appendChild(form);
     div.appendChild(output);
@@ -205,4 +238,3 @@ form.onsubmit = (e) => {
 </body>
 </html>
 """)
-
