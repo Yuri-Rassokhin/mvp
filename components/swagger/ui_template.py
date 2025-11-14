@@ -210,7 +210,14 @@ function makeDraggable(el) {
   function renderEndpointForm(id, endpoint) {
     const comp = attached[id].comp;
     const div = attached[id].div;
-    div.innerHTML = `<h4>${comp.name} (${id.slice(0,6)}) — ${endpoint}</h4>`;
+
+    div.innerHTML = `
+      <h4 style="line-height: 1.2em;">
+        ${comp.name} (${id.slice(0,6)})<br>
+        <div style="text-align: center; font-weight: normal; font-style: italic; font-size: 0.95em; margin-top: 0.2em;">
+          ${endpoint}
+        </div>
+      </h4>`;
 
     const form = document.createElement("form");
     const inputs = comp.io?.[endpoint]?.inputs || {};
