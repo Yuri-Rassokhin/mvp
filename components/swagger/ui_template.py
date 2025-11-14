@@ -1,6 +1,6 @@
 from textwrap import dedent
 
-# HTML template with soft gradient background, depth effect, centered title, and aligned result width
+# HTML template with visual depth, transparent headline, and consistent widths
 html_template = dedent("""
 <!DOCTYPE html>
 <html>
@@ -9,38 +9,27 @@ html_template = dedent("""
   <style>
     body {
       margin: 0;
+      padding: 0;
       font-family: sans-serif;
-      height: 100vh;
-      background: linear-gradient(to bottom, #f0f4ff, #dce3f0);
-      background-image: radial-gradient(circle at 60% 20%, rgba(255,255,255,0.3), transparent 60%),
-                        radial-gradient(circle at 30% 70%, rgba(200,200,255,0.2), transparent 50%),
-                        linear-gradient(to top left, rgba(240,240,255,0.1), transparent 70%);
+      background: linear-gradient(135deg, #f0f4ff, #d9e4f5);
+      background-image: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.6) 0%, transparent 60%),
+                        radial-gradient(circle at 70% 70%, rgba(255,255,255,0.4) 0%, transparent 70%);
       background-repeat: no-repeat;
-      background-size: cover;
-      position: relative;
+      background-attachment: fixed;
       overflow: hidden;
     }
-
     #logs {
       margin-top: 20px;
     }
-
-    .title {
-      position: absolute;
-      top: 30%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      font-size: 64px;
-      font-weight: bold;
-      color: rgba(50, 50, 100, 0.1);
-      text-shadow: 0px 15px 15px rgba(0,0,0,0.15);
-      pointer-events: none;
-      z-index: 0;
+    pre {
+        width: 100%;
+        box-sizing: border-box;
+        white-space: pre-wrap;
+        word-wrap: break-word;
     }
-
     .component {
       position: absolute;
-      background-color: #A5CAFF;
+      background-color: rgba(165, 202, 255, 0.9);
       border: 3px solid #5468C9;
       padding: 10px;
       border-radius: 10px;
@@ -50,14 +39,12 @@ html_template = dedent("""
       resize: both;
       box-sizing: border-box;
       transition: box-shadow 0.2s ease, transform 0.1s ease;
-      z-index: 1;
+      box-shadow: 4px 4px 10px rgba(0, 0, 0, 0.15);
     }
-
     .component:hover {
-      box-shadow: 0 0 10px rgba(0, 128, 255, 0.4);
+      box-shadow: 0 0 12px rgba(0, 128, 255, 0.5);
       transform: scale(1.01);
     }
-
     .context-menu {
       position: absolute;
       display: none;
@@ -66,7 +53,6 @@ html_template = dedent("""
       z-index: 1000;
       box-shadow: 2px 2px 6px rgba(0,0,0,0.2);
     }
-
     .context-menu button {
       display: block;
       width: 100%;
@@ -75,31 +61,33 @@ html_template = dedent("""
       background: none;
       text-align: left;
     }
-
     .context-menu button:hover {
       background-color: #eef;
     }
-
     input, button, select, textarea {
       font-family: inherit;
       font-size: 1em;
     }
-
     textarea {
       width: 100%;
       height: 150px;
     }
-
-    pre.output {
-      width: 100%;
-      overflow-x: auto;
-      white-space: pre-wrap;
-      word-wrap: break-word;
+    h1.depth-title {
+      position: absolute;
+      top: 40%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 4em;
+      color: rgba(0, 0, 64, 0.1);
+      text-shadow: 0 10px 15px rgba(0,0,0,0.2);
+      pointer-events: none;
+      user-select: none;
+      z-index: 0;
     }
   </style>
 </head>
 <body>
-<div class="title">MVP Desktop</div>
+<h1 class="depth-title">MVP Desktop</h1>
 <div id="logs"></div>
 <div id="menu" class="context-menu"></div>
 <script>
@@ -173,6 +161,7 @@ html_template = dedent("""
 
     const form = document.createElement("form");
     const inputs = comp.io?.[endpoint]?.inputs || {};
+    const inputValues = {};
 
     Object.entries(inputs).forEach(([name, type]) => {
       const label = document.createElement("label");
@@ -193,13 +182,15 @@ html_template = dedent("""
 
     const output = document.createElement("pre");
     output.id = "result-" + id;
-    output.className = "output";
     output.textContent = "Result will appear here";
+    output.style.width = "100%";
+    output.style.boxSizing = "border-box";
 
     form.onsubmit = (e) => {
       e.preventDefault();
       const payload = {};
       const data = new FormData(form);
+
       for (const [key, val] of data.entries()) {
         try {
           payload[key] = JSON.parse(val);
@@ -207,11 +198,14 @@ html_template = dedent("""
           payload[key] = val;
         }
       }
+
       const jsonPayload = Object.keys(payload).length > 0 ? payload : {};
 
       fetch(`/proxy/${comp.port}/${endpoint}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json"
+        },
         body: JSON.stringify(jsonPayload)
       })
         .then(r => r.json())
@@ -219,8 +213,9 @@ html_template = dedent("""
         .catch(err => output.textContent = "Error: " + err);
     };
 
+    form.appendChild(document.createElement("br"));
+    form.appendChild(output);
     div.appendChild(form);
-    div.appendChild(output);
   }
 
   document.addEventListener("contextmenu", e => {
@@ -238,3 +233,4 @@ html_template = dedent("""
 </body>
 </html>
 """)
+
