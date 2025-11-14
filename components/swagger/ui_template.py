@@ -113,6 +113,7 @@ html_template = dedent("""
   const components = __COMPONENTS_JSON__;
   const attached = {};
   let contextTargetId = null;
+  let topZIndex = 1000;
 
 function attachComponent(comp, x = null, y = null, width = 300) {
   if (attached[comp.id]) return;
@@ -158,6 +159,12 @@ function attachComponent(comp, x = null, y = null, width = 300) {
 function makeDraggable(el) {
   el.onmousedown = function (e) {
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+
+    el.style.zIndex = ++topZIndex;
+
+    el.onclick = function () {
+      el.style.zIndex = ++topZIndex;
+    };
 
     let offsetX = e.clientX - el.offsetLeft;
     let offsetY = e.clientY - el.offsetTop;
