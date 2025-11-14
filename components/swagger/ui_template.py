@@ -73,12 +73,6 @@ html_template = dedent("""
       font-family: inherit;
       font-size: 1em;
     }
-    textarea {
-      width: 100%;
-      resize: none;
-      min-height: 1.5em;
-      box-sizing: border-box;  
-    }
     h1.depth-title {
       position: absolute;
       top: 40%;
@@ -90,6 +84,21 @@ html_template = dedent("""
       pointer-events: none;
       user-select: none;
       z-index: 0;
+    }
+    textarea {
+      width: 100%;
+      resize: none;
+      min-height: 1.5em;
+      box-sizing: border-box;
+      border: none;
+      outline: none;
+      background-color: white;
+      padding: 4px;
+      border-radius: 4px;
+      transition: border 0.2s ease;
+    }
+    textarea:focus {
+      border: 1px solid #5468C9;  /* цвет как у .component */
     }
   </style>
 </head>
