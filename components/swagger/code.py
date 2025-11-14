@@ -1,8 +1,9 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import subprocess, json, httpx
 from ui_template import html_template
+import requests
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -53,4 +54,14 @@ async def ui():
 
     html = html_template.replace("__COMPONENTS_JSON__", json.dumps(comps))
     return HTMLResponse(content=html)
+
+@app.post("/proxy/{port}/{endpoint}")
+async def proxy(port: int, endpoint: str, request: Request):
+    body = await request.json()
+    url = f"http://127.0.0.1:{port}/{endpoint}"
+    try:
+        resp = requests.post(url, json=body)
+        return resp.json()
+    except Exception as e:
+        return {"error": str(e)}
 

@@ -15,8 +15,8 @@ html_template = dedent("""
     }
     .component {
       position: absolute;
-      background-color: #e0f0ff;
-      border: 3px solid #3399ff;
+      background-color: #A5CAFF;
+      border: 3px solid #5468C9;
       padding: 10px;
       border-radius: 10px;
       width: 300px;
@@ -27,7 +27,7 @@ html_template = dedent("""
       transition: box-shadow 0.2s ease, transform 0.1s ease;
     }
     .component:hover {
-      box-shadow: 0 0 10px rgba(0, 128, 255, 0.5);
+      //box-shadow: 0 0 10px rgba(0, 128, 255, 0.5);
       //transform: scale(1.01);
     }
     .context-menu {
@@ -172,7 +172,9 @@ form.onsubmit = (e) => {
 
   const jsonPayload = Object.keys(payload).length > 0 ? payload : {};
 
-  fetch(`http://127.0.0.1:${comp.port}/${endpoint}`, {
+  console.log("Calling:", `/proxy/${comp.port}/${endpoint}`, "with:", payload);
+
+  fetch(`/proxy/${comp.port}/${endpoint}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
