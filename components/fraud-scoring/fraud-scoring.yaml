@@ -4,3 +4,4 @@ endpoints:
   - train
   - quality
   - influence
+  - score
