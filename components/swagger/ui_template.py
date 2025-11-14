@@ -75,8 +75,9 @@ html_template = dedent("""
     }
     textarea {
       width: 100%;
-      height: 150px;
       resize: none;
+      min-height: 1.5em;
+      box-sizing: border-box;  
     }
     h1.depth-title {
       position: absolute;
@@ -173,6 +174,22 @@ html_template = dedent("""
       const label = document.createElement("label");
       label.textContent = name + " (" + type + "):";
       const input = document.createElement("textarea");
+      input.rows = 1;
+      input.style.overflow = "hidden";
+
+    if (["int", "float", "bool"].includes(type.toLowerCase())) {
+      input.style.resize = "none";
+    } else {
+      input.style.resize = "none";  // чтобы убрать уголок
+      input.addEventListener("input", () => autoResize(input));
+      autoResize(input);  // сразу подстроим при создании
+    }
+
+      //только для составных типов — авторастяжение при вводе
+      if (!["int", "float", "bool"].includes(type.toLowerCase())) {
+      input.addEventListener("input", () => autoResize(input));
+    }
+
       input.name = name;
       input.placeholder = `Enter ${type}...`;
       form.appendChild(label);
@@ -233,6 +250,11 @@ html_template = dedent("""
       document.getElementById("menu").style.display = "none";
     }
   });
+
+    function autoResize(textarea) {
+      textarea.style.height = "auto";
+      textarea.style.height = textarea.scrollHeight + "px";
+    }
 
   components.forEach(attachComponent);
 </script>
