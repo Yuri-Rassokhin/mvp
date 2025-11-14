@@ -114,28 +114,45 @@ html_template = dedent("""
   const attached = {};
   let contextTargetId = null;
 
-  function attachComponent(comp) {
-    if (attached[comp.id]) return;
+function attachComponent(comp) {
+  if (attached[comp.id]) return;
 
-    const div = document.createElement("div");
-    div.className = "component";
-    div.style.top = Math.random() * 400 + "px";
-    div.style.left = Math.random() * 600 + "px";
-    div.setAttribute("data-id", comp.id);
+  const div = document.createElement("div");
+  div.className = "component";
+  div.style.top = Math.random() * 400 + "px";
+  div.style.left = Math.random() * 600 + "px";
+  div.setAttribute("data-id", comp.id);
 
-    const header = document.createElement("h4");
-    header.textContent = comp.name + " (" + comp.id.slice(0, 6) + ")";
-    div.appendChild(header);
+  const headerText = comp.name + " (" + comp.id.slice(0, 6) + ")";
+  const header = document.createElement("h4");
+  header.textContent = headerText;
+  div.appendChild(header);
 
-    const pre = document.createElement("pre");
-    pre.id = "log-" + comp.id;
-    pre.textContent = "Right-click to select endpoint";
-    div.appendChild(pre);
+  // ✅ Вычисляем ширину текста
+  const span = document.createElement("span");
+  span.style.fontFamily = "sans-serif";
+  span.style.fontSize = "1em";
+  span.style.visibility = "hidden";
+  span.style.whiteSpace = "nowrap";
+  span.style.position = "absolute";
+  span.textContent = headerText;
+  document.body.appendChild(span);
+  const measuredWidth = span.offsetWidth + 60;  // немного запас под паддинги
+  document.body.removeChild(span);
 
-    makeDraggable(div);
-    document.getElementById("logs").appendChild(div);
-    attached[comp.id] = {div, comp};
-  }
+  // Ограничим разумный диапазон
+  const clampedWidth = Math.max(200, Math.min(1000, measuredWidth));
+  div.style.width = clampedWidth + "px";
+
+  const pre = document.createElement("pre");
+  pre.id = "log-" + comp.id;
+  pre.textContent = "Right-click to select endpoint";
+  div.appendChild(pre);
+
+  makeDraggable(div);
+  document.getElementById("logs").appendChild(div);
+  attached[comp.id] = {div, comp};
+}
 
 function makeDraggable(el) {
   el.onmousedown = function (e) {
