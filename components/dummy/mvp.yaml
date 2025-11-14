@@ -1,4 +1,4 @@
 name: diagnose
-description: For a given description of conditions, return candidate symptoms
+description: Dummy component for test purposes
 endpoints:
   - diagnose
