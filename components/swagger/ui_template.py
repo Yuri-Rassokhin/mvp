@@ -48,7 +48,7 @@ html_template = dedent("""
     }
     .component:hover {
       box-shadow: 0 0 12px rgba(0, 128, 255, 0.5);
-      transform: scale(1.01);
+      //transform: scale(1.01);
     }
     .context-menu {
       position: absolute;
@@ -84,9 +84,9 @@ html_template = dedent("""
       top: 40%;
       left: 50%;
       transform: translate(-50%, -50%);
-      font-size: 4em;
+      font-size: 10em;
       color: rgba(0, 0, 64, 0.1);
-      text-shadow: 0 10px 15px rgba(0,0,0,0.2);
+      //text-shadow: 0 10px 15px rgba(0,0,0,0.2);
       pointer-events: none;
       user-select: none;
       z-index: 0;
