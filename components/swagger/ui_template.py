@@ -114,13 +114,14 @@ html_template = dedent("""
   const attached = {};
   let contextTargetId = null;
 
-function attachComponent(comp) {
+function attachComponent(comp, x = null, y = null, width = 300) {
   if (attached[comp.id]) return;
 
   const div = document.createElement("div");
   div.className = "component";
-  div.style.top = Math.random() * 400 + "px";
-  div.style.left = Math.random() * 600 + "px";
+  div.style.top = (y ?? Math.random() * 400) + "px";
+  div.style.left = (x ?? Math.random() * 600) + "px";
+  div.style.width = width + "px";
   div.setAttribute("data-id", comp.id);
 
   const headerText = comp.name + " (" + comp.id.slice(0, 6) + ")";
@@ -294,7 +295,36 @@ function makeDraggable(el) {
       textarea.style.height = textarea.scrollHeight + "px";
     }
 
-  components.forEach(attachComponent);
+  let currentX = 40;
+  let currentY = 40;
+  const paddingX = 20;
+  const paddingY = 20;
+  const maxRowWidth = window.innerWidth - 60;
+
+  components.forEach(comp => {
+    // Создаем виртуальный div, чтобы измерить ширину компонента
+    const testDiv = document.createElement("div");
+    testDiv.style.position = "absolute";
+    testDiv.style.visibility = "hidden";
+    testDiv.style.padding = "10px";
+    testDiv.style.font = "bold 1em sans-serif";
+    testDiv.style.whiteSpace = "nowrap";
+    testDiv.textContent = comp.name + " (" + comp.id.slice(0, 6) + ")";
+    document.body.appendChild(testDiv);
+
+    const requiredWidth = testDiv.offsetWidth + 40; // учёт паддингов и границ
+    document.body.removeChild(testDiv);
+
+    // Перенос на новую строку при необходимости
+    if (currentX + requiredWidth > maxRowWidth) {
+      currentX = 40;
+      currentY += 180;
+    }
+
+    attachComponent(comp, currentX, currentY, requiredWidth);
+    currentX += requiredWidth + paddingX;
+  });
+
 </script>
 </body>
 </html>
