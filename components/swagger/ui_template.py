@@ -137,22 +137,31 @@ html_template = dedent("""
     attached[comp.id] = {div, comp};
   }
 
-  function makeDraggable(el) {
-    el.onmousedown = function (e) {
-      if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
-      let offsetX = e.clientX - el.offsetLeft;
-      let offsetY = e.clientY - el.offsetTop;
+function makeDraggable(el) {
+  el.onmousedown = function (e) {
+    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
 
-      function move(e) {
-        el.style.left = (e.clientX - offsetX) + 'px';
-        el.style.top = (e.clientY - offsetY) + 'px';
-      }
-      document.addEventListener('mousemove', move);
-      document.addEventListener('mouseup', () => {
-        document.removeEventListener('mousemove', move);
-      }, { once: true });
+    let offsetX = e.clientX - el.offsetLeft;
+    let offsetY = e.clientY - el.offsetTop;
+
+    // ⛔️ Запретить выделение текста
+    document.body.style.userSelect = "none";
+
+    function move(e) {
+      el.style.left = (e.clientX - offsetX) + 'px';
+      el.style.top = (e.clientY - offsetY) + 'px';
     }
-  }
+
+    document.addEventListener('mousemove', move);
+
+    document.addEventListener('mouseup', () => {
+      document.removeEventListener('mousemove', move);
+
+      // ✅ Включить обратно выделение текста
+      document.body.style.userSelect = "";
+    }, { once: true });
+  };
+}
 
   function showContextMenu(e, id) {
     e.preventDefault();
