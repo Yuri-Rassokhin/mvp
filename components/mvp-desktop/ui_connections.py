@@ -67,8 +67,29 @@ function drawConnection(fromEl, toEl) {
   line.setAttribute("x2", to.x);
   line.setAttribute("y2", to.y);
   line.classList.add("connection-line");
+  line.dataset.from = fromEl.getAttribute("data-id");
+  line.dataset.to = toEl.getAttribute("data-id");  
   svg.appendChild(line);
 }
+
+function updateConnections() {
+  const lines = document.querySelectorAll("line.connection-line");
+  lines.forEach(line => {
+    const fromEl = attached[line.dataset.from]?.div;
+    const toEl = attached[line.dataset.to]?.div;
+
+    if (!fromEl || !toEl) return;
+
+    const from = getCenter(fromEl);
+    const to = getCenter(toEl);
+
+    line.setAttribute("x1", from.x);
+    line.setAttribute("y1", from.y);
+    line.setAttribute("x2", to.x);
+    line.setAttribute("y2", to.y);
+  });
+}
+
 </script>
 """)
 

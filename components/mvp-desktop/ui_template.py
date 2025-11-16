@@ -177,6 +177,7 @@ function makeDraggable(el) {
     function move(e) {
       el.style.left = (e.clientX - offsetX) + 'px';
       el.style.top = (e.clientY - offsetY) + 'px';
+      updateConnections();
     }
 
     document.addEventListener('mousemove', move);
