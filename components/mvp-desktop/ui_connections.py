@@ -14,7 +14,7 @@ connection_support = dedent("""
   line.connection-line {
     stroke: #333;
     stroke-width: 2;
-    marker-end: url(#arrowhead);
+    marker-mid: url(#arrowhead);
   }
 </style>
 
@@ -68,7 +68,7 @@ function drawConnection(fromEl, toEl) {
   line.setAttribute("y2", to.y);
   line.classList.add("connection-line");
   line.dataset.from = fromEl.getAttribute("data-id");
-  line.dataset.to = toEl.getAttribute("data-id");  
+  line.dataset.to = toEl.getAttribute("data-id");
   svg.appendChild(line);
 }
 

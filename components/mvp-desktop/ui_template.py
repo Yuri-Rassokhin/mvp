@@ -30,7 +30,7 @@ html_template = dedent("""
     }
     .component {
       position: absolute;
-      background-color: rgba(165, 202, 255, 0.9);
+      background-color: rgba(165, 202, 255);
       border: 3px solid #5468C9;
       padding: 10px;
       border-radius: 10px;
