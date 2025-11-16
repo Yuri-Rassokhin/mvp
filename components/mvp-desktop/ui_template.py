@@ -1,4 +1,5 @@
 from textwrap import dedent
+from ui_connections import connection_support
 
 # HTML template with visual depth, transparent headline, and consistent widths
 html_template = dedent("""
@@ -341,6 +342,9 @@ function makeDraggable(el) {
   });
 
 </script>
+""")
+
+html_template = html_template + "\n" + connection_support + "\n" + dedent("""
 </body>
 </html>
 """)
