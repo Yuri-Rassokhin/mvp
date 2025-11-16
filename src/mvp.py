@@ -13,6 +13,7 @@ from rich.table import Table
 from rich.console import Console
 from typing import Optional
 from server.oracle import add_instance, remove_instance
+from file_tree import wait_for_instance_in_status, tail_log_until_uvicorn_ready, prepare_component_tree, launch_component_instance
 from mesh import get_component_status
 import time
 
@@ -24,163 +25,17 @@ from pathlib import Path
 
 import time
 
-def tail_log_until_uvicorn_ready(log_path: Path, timeout: int = 180, poll_interval: float = 0.5) -> bool:
-    """
-    Читает лог в реальном времени, пока не появится строка от Uvicorn.
-    Возвращает True, если удалось дождаться запуска, False — если по таймауту.
-    """
-    deadline = time.time() + timeout
-    seen_uvicorn = False
-    position = 0
 
-    print("⏳ Waiting for autorouter to start...")
-
-    while time.time() < deadline:
-        if log_path.exists():
-            with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
-                f.seek(position)
-                lines = f.readlines()
-                position = f.tell()
-
-                for line in lines:
-                    line = line.strip()
-                    print(line)
-                    if "Uvicorn running on" in line:
-                        seen_uvicorn = True
-                        break
-
-        if seen_uvicorn:
-            print("✅ autorouter started (Uvicorn is running)")
-            return True
-
-        time.sleep(poll_interval)
-
-    print("⚠ autorouter startup timeout — continuing anyway")
-    return False
-
-
-
-def wait_for_instance_in_status(instance_id: str, timeout=5.0):
-    """
-    Ждет, пока запись об instance появится в файле ~/.mvp/status.
-    """
-    status_path = Path.home() / ".mvp" / "status"
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if not status_path.exists():
-            time.sleep(0.1)
-            continue
-        try:
-            with open(status_path, "r") as f:
-                status = json.load(f)
-            for entry in status:
-                if entry.get("id") == instance_id:
-                    return entry
-        except Exception:
-            pass
-        time.sleep(180)
-    raise RuntimeError(f"⏳ Timeout: instance {instance_id} not found in status after {timeout}s")
 
 @app.command()
 def add(component: str):
     """
     Deploy new instance of a component to its tier environment.
     """
-    base_dir = Path(__file__).parent.parent.resolve()
-    manifest_path = Path(component).expanduser().resolve()
-
-    manifest_dir = Path(component).parent.resolve()
-
-    import subprocess
-    import uuid
-
-    if not manifest_path.exists():
-        typer.echo(f"❌ Manifest not found: {manifest_path}")
-        raise typer.Exit(1)
-
-    try:
-        with open(manifest_path, "r") as f:
-            manifest = yaml.safe_load(f)
-    except Exception as e:
-        typer.echo(f"❌ Failed to parse manifest as YAML: {e}")
-        raise typer.Exit(1)
-
-    # ✅ Валидация содержимого YAML
-    if not isinstance(manifest, dict):
-        typer.echo("❌ Manifest must be a YAML dictionary")
-        raise typer.Exit(1)
-
-    required_keys = ["name", "endpoints"]
-    for key in required_keys:
-        if key not in manifest:
-            typer.echo(f"❌ Manifest missing required key: {key}")
-            raise typer.Exit(1)
-
-    if not isinstance(manifest["endpoints"], list) or not all(isinstance(x, str) for x in manifest["endpoints"]):
-        typer.echo("❌ 'endpoints' must be a list of strings")
-        raise typer.Exit(1)
-
-    if "start" in manifest:
-        if not isinstance(manifest["start"], list) or not all(isinstance(x, str) for x in manifest["start"]):
-            typer.echo("❌ 'start' must be a list of strings if specified")
-            raise typer.Exit(1)
-
-    if "description" not in manifest:
-        typer.echo("⚠️  Warning: Manifest has no 'description'")
-
-    # Install dependencies if requirements.txt is present
-    req_file = manifest_dir / "requirements.txt"
-    if req_file.exists():
-        typer.echo("installing dependencies")
-        subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(req_file)], check=True)
-
-    # generate unique log for the current instance of the component
-    component_name = Path(component).stem
-    unique_id = uuid.uuid4().hex  # 32 символа, уникальный
-    log_dir = Path.home() / ".mvp" / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    # Запускаем процесс — пока без PID
-    log_file_base = log_dir / f"mvp-{unique_id}"
-    tmp_log_path = log_file_base.with_suffix(".tmp")  # временный лог, до получения PID
-
-    with open(tmp_log_path, "ab") as out:
-        process = subprocess.Popen(
-            [sys.executable, "-u", str(base_dir / "src" / "autorouter.py"), str(manifest_path), unique_id],
-            stdout=out,
-            stderr=out,
-            stdin=subprocess.DEVNULL,
-            close_fds=True,
-            start_new_session=True
-        )
-
-    tail_log_until_uvicorn_ready(tmp_log_path)
-    pid = process.pid
-    final_log_path = log_dir / f"mvp-{unique_id}-pid{pid}.log"
-    tmp_log_path.rename(final_log_path)
-
-    # 🔽 Ждем появления записи в статусе
-    try:
-        instance_record = wait_for_instance_in_status(unique_id)
-    except RuntimeError as e:
-        typer.echo(str(e))
-        raise typer.Exit(1)
-
-    endpoint_strings = []
-    for ep in instance_record["endpoints"]:
-        sig = instance_record.get("io", {}).get(ep, {}).get("inputs", {})
-        formatted_sig = ", ".join(f"{k}: {v}" for k, v in sig.items())
-        endpoint_strings.append(f"{ep} {{{formatted_sig}}}")
-
-    add_instance(
-        instance_record['name'],
-        unique_id,
-        instance_record['description'],
-        f"http://{instance_record['ip']}:{instance_record['port']}",
-        endpoint_strings
-    )
-
-    typer.echo(f"instance {unique_id} of the component {component_name} launched")
+    # 1) Подготовка дерева компонентов: локального или git-based
+    work_dir, manifest_path = prepare_component_tree(component)
+    # 2) Запуск компонента
+    launch_component_instance(work_dir, manifest_path)
 
 @app.command()
 def rm(instance: str):
