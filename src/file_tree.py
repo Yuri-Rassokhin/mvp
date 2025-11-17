@@ -140,6 +140,9 @@ def launch_component_instance(work_dir: Path, manifest_path: Path):
         formatted = ", ".join(f"{k}: {v}" for k, v in sig.items())
         endpoint_strings.append(f"{ep} {{{formatted}}}")
 
+    endpoint_strings.extend([ "intro/manifest", "output/log", "output/stream" ])
+    endpoint_strings.sort()
+    
     # Добавляем в статус
     add_instance(
         instance['name'],

@@ -99,6 +99,8 @@ def update_component_status(name, description, endpoints, port, modules, instanc
     status_path = Path.home() / ".mvp" / "status"
     status_path.parent.mkdir(parents=True, exist_ok=True)
 
+    endpoints.extend([ "intro/manifest", "output/log", "output/stream"])
+
     if status_path.exists():
         try:
             with open(status_path, "r") as f:
