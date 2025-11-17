@@ -162,6 +162,14 @@ function makeDraggable(el) {
   el.onmousedown = function (e) {
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
 
+    const rect = el.getBoundingClientRect();
+    const resizeZone = 16;  // нижний правый угол 16x16px
+    const isInResizeCorner =
+      e.clientX >= rect.right - resizeZone &&
+      e.clientY >= rect.bottom - resizeZone;
+
+    if (isInResizeCorner) return;  // 🚫 НЕ начинаем drag
+
     el.style.zIndex = ++topZIndex;
 
     el.onclick = function () {
