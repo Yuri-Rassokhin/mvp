@@ -11,7 +11,7 @@ from pathlib import Path
 ux_proc = None
 
 def desktop():
-    pass
+    return {"status": "ok"}
 
 
 

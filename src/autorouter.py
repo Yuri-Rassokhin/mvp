@@ -62,7 +62,7 @@ modules = scan_and_import_endpoints(component_dir, allowed_funcs, start_funcs, a
 
 
 
-@app.post("/intro/manifest")
+@app.post("/system-manifest")
 def intro_manifest():
     """
     Возвращает runtime-манифест для текущего instance из ~/.mvp/status
@@ -77,12 +77,12 @@ def intro_manifest():
 
 
 
-@app.post("/output/log", response_class=PlainTextResponse)
+@app.post("/system-log", response_class=PlainTextResponse)
 def get_log():
     result = subprocess.run(["mvp", "log", instance_id], capture_output=True, text=True)
     return result.stdout
 
-@app.post("/output/stream")
+@app.post("/system-stream")
 def stream_log():
     process = subprocess.Popen(["mvp", "log", instance_id, "-f"], stdout=subprocess.PIPE)
 
