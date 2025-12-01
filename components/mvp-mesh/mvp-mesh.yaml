@@ -1,0 +1,4 @@
+name: mvp-mesh
+description: MVP Mesh is a system proxy processing user requests
+endpoints:
+  - call
