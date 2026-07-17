@@ -2,6 +2,7 @@ from pathlib import Path
 import time
 import typer
 
+from server.oracle import add_instance, remove_instance
 
 def prepare_component_tree(component: str):
     """
@@ -123,17 +124,21 @@ def launch_component_instance(work_dir: Path, manifest_path: Path):
             start_new_session=True
         )
 
-    # Ожидание готовности uvicorn
+    # Waiting server to report its status
     tail_log_until_uvicorn_ready(tmp_log)
+
+    typer.echo("INFO: Uvicorn launched, waiting for its status...")
 
     pid = process.pid
     final_log = log_dir / f"mvp-{unique_id}-pid{pid}.log"
     tmp_log.rename(final_log)
 
-    # Ждем пока статус появится
+    # Waiting for the status to come
     instance = wait_for_instance_in_status(unique_id)
 
-    # Конверсия io → читаемые endpoint строки
+    typer.echo("INFO: Status received successfully")
+
+    # Convert io → readable endpoint strings
     endpoint_strings = []
     for ep in instance["endpoints"]:
         sig = instance.get("io", {}).get(ep, {}).get("inputs", {})
@@ -143,7 +148,7 @@ def launch_component_instance(work_dir: Path, manifest_path: Path):
     endpoint_strings.extend([ "system-manifest", "system-log", "system-stream" ])
     endpoint_strings.sort()
 
-    # Добавляем в статус
+    # Add status
     add_instance(
         instance['name'],
         unique_id,
@@ -191,25 +196,54 @@ def tail_log_until_uvicorn_ready(log_path: Path, timeout: int = 180, poll_interv
     return False
 
 
-
-def wait_for_instance_in_status(instance_id: str, timeout=5.0):
+def wait_for_instance_in_status(instance_id: str, timeout=15.0):
     """
     Ждет, пока запись об instance появится в файле ~/.mvp/status.
     """
+    import json
+    
     status_path = Path.home() / ".mvp" / "status"
     deadline = time.time() + timeout
+    
+    print(f"🔍 DEBUG: Ищем id {instance_id} в {status_path}")
+    
     while time.time() < deadline:
         if not status_path.exists():
-            time.sleep(0.1)
+            print(f"🔍 DEBUG: Файл {status_path} еще не существует...")
+            time.sleep(0.5)
             continue
+            
         try:
             with open(status_path, "r") as f:
-                status = json.load(f)
+                content = f.read()
+                if not content.strip():
+                    print("🔍 DEBUG: Файл существует, но он пустой.")
+                    time.sleep(0.5)
+                    continue
+                    
+                status = json.loads(content)
+                
+            if not isinstance(status, list):
+                print(f"⚠️ DEBUG: Ожидался список (list), а получили {type(status)}. Содержимое: {status}")
+                time.sleep(0.5)
+                continue
+                
+            # Ищем нужный ID
+            found_ids = []
             for entry in status:
-                if entry.get("id") == instance_id:
-                    return entry
-        except Exception:
-            pass
-        time.sleep(180)
+                if isinstance(entry, dict):
+                    current_id = entry.get("id")
+                    found_ids.append(current_id)
+                    if current_id == instance_id:
+                        return entry
+                        
+            print(f"🔍 DEBUG: В файле нет нужного ID. Доступные ID: {found_ids}")
+            
+        except json.JSONDecodeError as e:
+            print(f"⚠️ DEBUG: Ошибка JSON (файл сломан или недописан): {e}")
+        except Exception as e:
+            print(f"⚠️ DEBUG: Непредвиденная ошибка: {repr(e)}")
+            
+        time.sleep(0.5)
+        
     raise RuntimeError(f"⏳ Timeout: instance {instance_id} not found in status after {timeout}s")
-

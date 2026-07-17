@@ -14,6 +14,25 @@ import uvicorn
 
 
 
+# Read config with excluded subdirectories such as venv, etc
+def get_excluded_dirs() -> set:
+    """
+    Читает список игнорируемых директорий из ~/.mvp/exclude.
+    Возвращает множество (set) названий папок.
+    """
+    # Базовые исключения, которые спасут от сканирования тяжелых папок по умолчанию
+    excludes = {".git", "venv", ".venv", "env", "__pycache__", "node_modules"}
+
+    exclude_file = Path.home() / ".mvp" / "exclude"
+    if exclude_file.exists():
+        with open(exclude_file, "r") as f:
+            for line in f:
+                cleaned = line.strip()
+                if cleaned and not cleaned.startswith("#"):
+                    excludes.add(cleaned.strip("/"))
+
+    return excludes
+
 # Returns True if file has unsafe code in global scope, False otherwise
 def has_top_level_code(filepath):
     with open(filepath, "r") as f:
@@ -27,8 +46,13 @@ def has_top_level_code(filepath):
 
 # Return list of files with endpoint functions
 def find_candidate_files(component_dir, allowed_funcs):
+    excludes = get_excluded_dirs()
     candidates = []
-    for root, _, files in os.walk(component_dir):
+    
+    for root, dirs, files in os.walk(component_dir):
+        # 🔑 Отсекаем ненужные папки, чтобы os.walk в них даже не заходил
+        dirs[:] = [d for d in dirs if d not in excludes]
+        
         for filename in files:
             if filename.endswith(".py"):
                 path = os.path.join(root, filename)
@@ -41,6 +65,7 @@ def find_candidate_files(component_dir, allowed_funcs):
                                 break
                 except Exception as e:
                     print(f"❌ Failed to parse {path}: {e}")
+                    
     return candidates
 
 

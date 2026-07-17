@@ -12,12 +12,12 @@ def get_url() -> str:
     """
     db_path = Path.home() / ".mvp" / "database"
     if not db_path.exists():
-        typer.echo("❌ Database URL file ~/.mvp/database not found")
+        typer.echo("WARN: Database URL file ~/.mvp/database not found")
         raise typer.Exit(1)
 
     url = db_path.read_text().strip()
     if not url:
-        typer.echo("❌ Database URL file ~/.mvp/database is empty")
+        typer.echo("WARN: Database URL file ~/.mvp/database is empty")
         raise typer.Exit(1)
 
     return url
