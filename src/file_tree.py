@@ -20,7 +20,7 @@ def prepare_component_tree(component: str):
     orig_manifest_path = Path(component).expanduser().resolve()
 
     if not orig_manifest_path.exists():
-        typer.echo(f"❌ Manifest not found: {orig_manifest_path}")
+        typer.echo(f"ERROR: Manifest not found: {orig_manifest_path}")
         raise typer.Exit(1)
 
     # Прочитаем YAML для анализа source:
@@ -28,11 +28,11 @@ def prepare_component_tree(component: str):
         with open(orig_manifest_path, "r") as f:
             manifest = yaml.safe_load(f)
     except Exception as e:
-        typer.echo(f"❌ Failed to parse manifest: {e}")
+        typer.echo(f"ERROR: Failed to parse manifest: {e}")
         raise typer.Exit(1)
 
     if not isinstance(manifest, dict):
-        typer.echo("❌ Manifest must be a YAML dictionary")
+        typer.echo("ERROR: Manifest must be a YAML dictionary")
         raise typer.Exit(1)
 
     # Если source отсутствует → работаем в локальной директории
@@ -43,7 +43,7 @@ def prepare_component_tree(component: str):
     # Если source есть → git clone
     source = manifest["source"]
     if "url" not in source:
-        typer.echo("❌ 'source' requires a 'url' field")
+        typer.echo("ERROR: 'source' requires a 'url' field")
         raise typer.Exit(1)
 
     url = source["url"]
@@ -52,18 +52,18 @@ def prepare_component_tree(component: str):
     # Создаём tmp-каталог
     tmp_dir = Path(tempfile.mkdtemp(prefix="mvp-src-"))
 
-    typer.echo(f"📥 Cloning: {url}")
+    typer.echo(f"INFO: Cloning URL {url}")
     subprocess.run(["git", "clone", url, str(tmp_dir)], check=True)
 
     if commit:
-        typer.echo(f"📌 Checking out commit: {commit}")
+        typer.echo(f"INFO: Checking out commit {commit}")
         subprocess.run(["git", "-C", str(tmp_dir), "checkout", commit], check=True)
 
-    # Кладём манифест внутрь дерева клона
+    # Put manifesto to the cloned tree
     manifest_path_in_clone = tmp_dir / orig_manifest_path.name
     shutil.copy2(orig_manifest_path, manifest_path_in_clone)
 
-    typer.echo(f"📦 Using temporary component tree at: {tmp_dir}")
+    typer.echo(f"INFO: Using temporary component tree at: {tmp_dir}")
 
     return tmp_dir, manifest_path_in_clone
 
@@ -90,21 +90,21 @@ def launch_component_instance(work_dir: Path, manifest_path: Path):
     required_keys = ["name", "endpoints"]
     for key in required_keys:
         if key not in manifest:
-            typer.echo(f"❌ Manifest missing required key: {key}")
+            typer.echo(f"ERROR: Manifest missing required key: {key}")
             raise typer.Exit(1)
 
     if not isinstance(manifest["endpoints"], list):
-        typer.echo("❌ 'endpoints' must be a list of strings")
+        typer.echo("ERROR: 'endpoints' must be a list of strings")
         raise typer.Exit(1)
 
     if "start" in manifest and not isinstance(manifest["start"], list):
-        typer.echo("❌ 'start' must be a list of strings")
+        typer.echo("ERROR: 'start' must be a list of strings")
         raise typer.Exit(1)
 
     # install requirements.txt (если есть)
     req_file = work_dir / "requirements.txt"
     if req_file.exists():
-        typer.echo("📦 Installing dependencies...")
+        typer.echo("INFO: Installing dependencies...")
         subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(req_file)], check=True)
 
     # Готовим логи
@@ -127,7 +127,7 @@ def launch_component_instance(work_dir: Path, manifest_path: Path):
     # Waiting server to report its status
     tail_log_until_uvicorn_ready(tmp_log)
 
-    typer.echo("INFO: Uvicorn launched, waiting for its status...")
+    typer.echo("INFO: Waiting for the status of endpoint server")
 
     pid = process.pid
     final_log = log_dir / f"mvp-{unique_id}-pid{pid}.log"
@@ -136,7 +136,7 @@ def launch_component_instance(work_dir: Path, manifest_path: Path):
     # Waiting for the status to come
     instance = wait_for_instance_in_status(unique_id)
 
-    typer.echo("INFO: Status received successfully")
+    typer.echo("INFO: Endpoint server returned status successfully")
 
     # Convert io → readable endpoint strings
     endpoint_strings = []
@@ -157,7 +157,7 @@ def launch_component_instance(work_dir: Path, manifest_path: Path):
         endpoint_strings
     )
 
-    typer.echo(f"🚀 instance {unique_id} of {instance['name']} launched")
+    typer.echo(f"INFO: Instance {unique_id} of '{instance['name']}' launched")
 
 
 
@@ -170,7 +170,7 @@ def tail_log_until_uvicorn_ready(log_path: Path, timeout: int = 180, poll_interv
     seen_uvicorn = False
     position = 0
 
-    print("⏳ Waiting for autorouter to start...")
+    print("INFO: Waiting for autorouter to start")
 
     while time.time() < deadline:
         if log_path.exists():
@@ -187,12 +187,12 @@ def tail_log_until_uvicorn_ready(log_path: Path, timeout: int = 180, poll_interv
                         break
 
         if seen_uvicorn:
-            print("✅ autorouter started (Uvicorn is running)")
+            print("INFO: Endpoint server launched successfully")
             return True
 
         time.sleep(poll_interval)
 
-    print("⚠ autorouter startup timeout — continuing anyway")
+    print("WARN: Server startup timeout, continuing anyway")
     return False
 
 
@@ -205,11 +205,8 @@ def wait_for_instance_in_status(instance_id: str, timeout=15.0):
     status_path = Path.home() / ".mvp" / "status"
     deadline = time.time() + timeout
     
-    print(f"🔍 DEBUG: Ищем id {instance_id} в {status_path}")
-    
     while time.time() < deadline:
         if not status_path.exists():
-            print(f"🔍 DEBUG: Файл {status_path} еще не существует...")
             time.sleep(0.5)
             continue
             
@@ -217,18 +214,17 @@ def wait_for_instance_in_status(instance_id: str, timeout=15.0):
             with open(status_path, "r") as f:
                 content = f.read()
                 if not content.strip():
-                    print("🔍 DEBUG: Файл существует, но он пустой.")
                     time.sleep(0.5)
                     continue
                     
                 status = json.loads(content)
                 
             if not isinstance(status, list):
-                print(f"⚠️ DEBUG: Ожидался список (list), а получили {type(status)}. Содержимое: {status}")
+                print(f"WARN: List expected, but {type(status)} received with the status: {status}")
                 time.sleep(0.5)
                 continue
                 
-            # Ищем нужный ID
+            # Find the ID
             found_ids = []
             for entry in status:
                 if isinstance(entry, dict):
@@ -237,13 +233,14 @@ def wait_for_instance_in_status(instance_id: str, timeout=15.0):
                     if current_id == instance_id:
                         return entry
                         
-            print(f"🔍 DEBUG: В файле нет нужного ID. Доступные ID: {found_ids}")
+            print(f"ERROR: Requested {instance_id} is missing. Existing IDs: {found_ids}")
             
         except json.JSONDecodeError as e:
-            print(f"⚠️ DEBUG: Ошибка JSON (файл сломан или недописан): {e}")
+            print(f"ERROR: Broken JSON file: {e}")
         except Exception as e:
-            print(f"⚠️ DEBUG: Непредвиденная ошибка: {repr(e)}")
+            print(f"ERROR: Unexpected error: {repr(e)}")
             
         time.sleep(0.5)
         
-    raise RuntimeError(f"⏳ Timeout: instance {instance_id} not found in status after {timeout}s")
+    raise RuntimeError(f"ERROR: Instance {instance_id} has not appeared after {timeout}s timeout")
+

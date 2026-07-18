@@ -12,7 +12,7 @@ def get_url() -> str:
     """
     db_path = Path.home() / ".mvp" / "database"
     if not db_path.exists():
-        typer.echo("WARN: Database URL file ~/.mvp/database not found")
+        #typer.echo("WARN: Database URL file ~/.mvp/database not found")
         raise typer.Exit(1)
 
     url = db_path.read_text().strip()
@@ -44,7 +44,7 @@ def add_instance(component: str, instance: str, description: str, url: str, endp
     try:
         ords_url = get_url()
     except Exception as e:
-        typer.echo(f"⚠️  Exception while adding instance: {e}")
+#        typer.echo(f"⚠️  Exception while adding instance: {e}")
         return
 
     payload = {
