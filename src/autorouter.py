@@ -18,6 +18,7 @@ import yaml
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import uvicorn
+import asyncio
 import ast
 import importlib.util
 from types import ModuleType
@@ -94,5 +95,15 @@ def stream_log():
 
 port = find_free_port()
 update_component_status(component_name, description, list(allowed_funcs), port, modules, instance_id)
-uvicorn.run(app, host="0.0.0.0", port=port)
+
+# This is a single-thread, blocking launcher
+#uvicorn.run(app, host="0.0.0.0", port=port)
+
+async def main():
+    config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
+    server = uvicorn.Server(config)
+    await server.serve()
+
+if __name__ == "__main__":
+    asyncio.run(main())
 

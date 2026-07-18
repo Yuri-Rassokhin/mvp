@@ -4,6 +4,7 @@ import inspect
 import importlib.util
 import ast
 from fastapi import FastAPI
+from fastapi.concurrency import run_in_threadpool
 from pydantic import create_model
 import yaml
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,7 +65,7 @@ def find_candidate_files(component_dir, allowed_funcs):
                                 candidates.append(path)
                                 break
                 except Exception as e:
-                    print(f"❌ Failed to parse {path}: {e}")
+                    print(f"ERROR: Failed to parse {path}: {e}")
                     
     return candidates
 
@@ -89,21 +90,26 @@ def safe_import_module(filepath, component_root):
 
 
 
-# === Сканируем нужные модули и создаём endpoint'ы ===
+# Scan the modules and create endpoints
+from fastapi.concurrency import run_in_threadpool
+
 def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_funcs: list, app: FastAPI, component_root: str):
     modules = []
     candidate_files = find_candidate_files(component_dir, allowed_funcs)
+    
+    # Множество для отслеживания успешно созданных эндпоинтов
+    activated_funcs = set()
 
     for filepath in candidate_files:
-        print(f"Converting {filepath}")
+        print(f"INFO: Converting {filepath} to an endpoint")
 
         if has_top_level_code(filepath):
-            raise RuntimeError(f"❌ Unsafe global code found in: {filepath}. Aborting.")
+            raise RuntimeError(f"ERROR: Unsafe global code found in {filepath}, aborting")
 
         try:
             module = safe_import_module(filepath, component_dir)
         except Exception as e:
-            print(f"❌ Failed to import {filepath}: {e}")
+            print(f"ERROR: Failed to import {filepath}: {e}")
             continue
 
         modules.append(module)
@@ -112,9 +118,9 @@ def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_func
             if hasattr(module, fname):
                 try:
                     getattr(module, fname)()
-                    print(f"✅ Start function '{fname}' executed from {filepath}")
+                    print(f"INFO: Start function '{fname}' executed from {filepath}")
                 except Exception as e:
-                    print(f"❌ Start function '{fname}' failed in {filepath}: {e}")
+                    print(f"ERROR: Start function '{fname}' failed in {filepath}: {e}")
 
         for name, func in inspect.getmembers(module, inspect.isfunction):
             if name in allowed_funcs:
@@ -125,11 +131,20 @@ def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_func
                     fields[param_name] = (ann, ...)
                 Model = create_model(f"{name.title()}Input", **fields)
 
+                # Создаем обертку, поддерживающую и sync, и async функции
                 async def endpoint(data: Model, _func=func):
-                    return _func(**data.dict())
+                    if inspect.iscoroutinefunction(_func):
+                        return await _func(**data.dict())
+                    return await run_in_threadpool(_func, **data.dict())
 
                 app.post(f"/{name}", name=name)(endpoint)
-                print(f"✅ Endpoint /{name} activated from {filepath}")
+                activated_funcs.add(name)
+                print(f"INFO: Endpoint /{name} activated from {filepath}")
+
+    # Проверка: все ли функции из манифеста были найдены
+    missing_funcs = allowed_funcs - activated_funcs
+    for func_name in missing_funcs:
+        print(f"WARN: Skipping endpoint '{func_name}' as it is specified in manifest, but not found in codebase")
 
     return modules
 
