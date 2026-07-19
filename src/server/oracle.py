@@ -7,12 +7,16 @@ from dotenv import load_dotenv
 
 
 def get_url() -> str:
+
+    # DEBUG DUMMY
+    return
+
     """
     Читает URL базы данных из файла ~/.mvp/database.
     """
     db_path = Path.home() / ".mvp" / "database"
     if not db_path.exists():
-        #typer.echo("WARN: Database URL file ~/.mvp/database not found")
+        typer.echo("WARN: Database URL file ~/.mvp/database not found")
         raise typer.Exit(1)
 
     url = db_path.read_text().strip()
@@ -25,6 +29,8 @@ def get_url() -> str:
 
 
 def remove_instance(instance: str):
+    # DEBUG DUMMY
+    return
     try:
         ords_url = get_url()
         url = f"{ords_url}{instance}"
@@ -37,6 +43,8 @@ def remove_instance(instance: str):
 
 
 def add_instance(component: str, instance: str, description: str, url: str, endpoints: list[str]):
+    # DEBUG DUMMY
+    return
     """
     Записывает инстанс компонента в таблицу MVP_DEVELOPMENT через ORDS.
     URL берётся из переменной окружения ORDS_MVP_URL.
@@ -44,7 +52,7 @@ def add_instance(component: str, instance: str, description: str, url: str, endp
     try:
         ords_url = get_url()
     except Exception as e:
-#        typer.echo(f"⚠️  Exception while adding instance: {e}")
+        typer.echo(f"⚠️  Exception while adding instance: {e}")
         return
 
     payload = {

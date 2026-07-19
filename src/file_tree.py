@@ -170,7 +170,7 @@ def tail_log_until_uvicorn_ready(log_path: Path, timeout: int = 180, poll_interv
     seen_uvicorn = False
     position = 0
 
-    print("INFO: Waiting for autorouter to start")
+    print("INFO: Launching MVP server")
 
     while time.time() < deadline:
         if log_path.exists():
