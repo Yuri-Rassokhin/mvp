@@ -145,7 +145,7 @@ def launch_component_instance(work_dir: Path, manifest_path: Path):
         formatted = ", ".join(f"{k}: {v}" for k, v in sig.items())
         endpoint_strings.append(f"{ep} {{{formatted}}}")
 
-    endpoint_strings.extend([ "system-manifest", "system-log", "system-stream" ])
+    endpoint_strings.extend([ "contract", "syslog", "syslog-stream" ])
     endpoint_strings.sort()
 
     # Add status

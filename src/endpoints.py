@@ -101,7 +101,7 @@ def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_func
     activated_funcs = set()
 
     for filepath in candidate_files:
-        print(f"INFO: Converting {filepath} to an endpoint")
+        print(f"INFO: Converting {filepath} to endpoint")
 
         if has_top_level_code(filepath):
             raise RuntimeError(f"ERROR: Unsafe global code found in {filepath}, aborting")

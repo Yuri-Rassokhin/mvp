@@ -96,7 +96,7 @@ def get_signatures(modules, endpoints):
 
 
 def update_component_status(name, description, endpoints, port, modules, instance_id):
-    endpoints.extend([ "system-manifest", "system-log", "system-stream"])
+    endpoints.extend([ "contract", "syslog", "syslog-stream"])
     status_path = Path.home() / ".mvp" / "status"
     status_path.parent.mkdir(parents=True, exist_ok=True)
 
