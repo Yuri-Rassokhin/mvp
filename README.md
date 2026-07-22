@@ -35,9 +35,7 @@ Description  highly optimized library for mathematical increment
 http://10.0.0.200:8500/increment { "number": int }
 ```
 
-MVP automatically determined the lowest port starting from 8500, and exposed `increment` function as a conventional HTTP endpoint.
-
-Now you can call it from CLI:
+MVP automatically determined the lowest port starting from 8500 and exposed `increment` function as a conventional HTTP endpoint. You can now call it from CLI:
 
 ```bash
 dev> mvp call 2caf39411e18472980b3ece78ecb50b9 increment '{"number":42}'
