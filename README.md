@@ -53,6 +53,15 @@ MVP roadmap has rich functionality in the roadmap - from a mock layer of your co
 
 
 
+## Why MVP?
+
+While conventional HTTP frameworks such as FastAPI follow the **functional** paradigm, MVP follows **declarative** paradign, taking you to higher level of abstraction.
+Instead of thinking HOW you code works in detail, you can focus on WHAT you code does at higher level - this is why the concept of a contract is crucial in MVP.
+
+Even more importantly, a contract provides MVP framework with complete information about your project.
+As MVP knows what fucntions must be exposed as HTTP, it can track correctness of their behaviour, provide fallback tier if production endpoint has gone offline, reload the endpoint if its code has changed, pull the code directly from GitHub repo, measure response latencies, visualize a diagram of the endpoints and their intercommunication, and many more.
+
+
 ## Requirements
 
 MVP sets a few restrictions for the Python project to be convertible.
