@@ -46,10 +46,8 @@ You can also manage your endpoints from any Python code.
 
 While the example above is trivial, MVP hides a lot of functionality for convenience of a developer:
 - Automated assignment of HTTP ports
-- Identify and warn about potentially unsafe code in global scope (which is anything except import, declaration, and constant assignment)
-- Automated transformation of the code as a future endpoint:
-  - If your function lacks `return` statement, then MVP adds `return 200` for clarity
-  - If your code includes `if __name__ == __main__` construct, MVP completely removes it
+- Identification and notification about potentially unsafe code in the global scope (anything except import, declaration, and constant assignment)
+- Automated transformation of the code as a future endpoint. If your function lacks `return` statement, then MVP adds `return 200` for clarity. If your file includes `if __name__ == __main__` construct, MVP removes it completely
 
 MVP road has rich functionality in the roadmap - from a mock layer of your component through in-flight performance benchmarking to automated drawing of the communication dagram of your architecture, so stay tuned.
 
