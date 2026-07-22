@@ -5,7 +5,7 @@ Framework for quick development of a minimal viable product as HTTP mesh of loos
 
 ## How It Works
 
-MVP analyzes codebase of your Python project and turns its functions into HTTP endpoints.
+MVP analyzes codebase of your Python project and turns specified functions into HTTP endpoints.
 You just have to specify which functions to expose as HTTP endpoints.
 To do this, you put `contract` YAML file in the root directory of your project.
 
