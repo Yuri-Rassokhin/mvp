@@ -61,6 +61,8 @@ Instead of thinking HOW you code works in detail, you can focus on WHAT you code
 Even more importantly, a contract provides MVP framework with complete information about your project.
 As MVP knows what fucntions must be exposed as HTTP, it can track correctness of their behaviour, provide fallback tier if production endpoint has gone offline, reload the endpoint if its code has changed, pull the code directly from GitHub repo, measure response latencies, visualize a diagram of the endpoints and their intercommunication, and many more.
 
+Finally and most importantly, MVP's contracts literally set a contract for your collaborators. No matter what you're doing to your code, your teammates will be provided with the functionality guaranteed by the contract you announced via MVP. This turns collaborative software development to a loosely-coupled work, where none of you depends on another one, and waits for no one. You just declare your MVP contracts across your team and enjoy developing of your own part of code.
+
 
 ## Requirements
 
