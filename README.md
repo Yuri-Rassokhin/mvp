@@ -1,33 +1,70 @@
-# MVP
-Framework for quick development of MVP as HTTP mesh of loosely coupled microservices
+# What is MVP
+Framework for quick development of a minimal viable product as HTTP mesh of loosely coupled microservices
+
+
 
 ## How It Works
 
-If you have a Python code that you want to add to MVP mesh as a resilient, managed HTTP endpoint,
-create manifest file in root folder of your project:
+MVP analyzes codebase of your Python project and turns its functions into HTTP endpoints.
+You just have to specify which functions to expose as HTTP endpoints.
+To do this, you put `contract` YAML file in the root directory of your project.
 
-`coolproject.yaml`
+As a toy example, let's create a simple Python file:
 
-name: MyCoolProject
-description: This project does cool things
+```python
+def increment(number: int)
+	return number+1
+```
+
+To turn in to HTTP endpoint, put the following contract 'contract.yaml' in the same (or higher) directory:
+
+```yaml
+name: increment
+description: highly optimized library for mathematical increment
 endpoints:
-     - run_me_function
+     - increment
+```
 
-And run `mvp add ./coolproject.yaml`
+Then run `mvp add ./contract.yaml`. MVP will recursively scan current directory, finds `increment` function in the Python file, converts it to an HTTP endpoint, and exposes the endpoint. You can check its status:
 
-Your project will become available as HTTP endpoint with the path `/run_me_function`. You can check it yourself:
+```bash
+dev> mvp ls
+────────────────────────────────────────
+Component    increment
+Instance     2caf39411e18472980b3ece78ecb50b9
+Description  highly optimized library for mathematical increment
+http://10.0.0.200:8500/increment { "number": int }
+```
 
-`mvp ls`
+MVP automatically determined the lowest port starting from 8500, and exposed `increment` function as a conventional HTTP endpoint.
+
+Now you can call it from CLI:
+
+```bash
+dev> mvp call 2caf39411e18472980b3ece78ecb50b9 increment '{"number":42}'
+43
+```
+
+You can also manage your endpoints from any Python code.
+
+While the example above is trivial, MVP hides a lot of functionality for convenience of a developer:
+- Automated assignment of HTTP ports
+- Identify and warn about potentially unsafe code in global scope (which is anything except import, declaration, and constant assignment)
+- Automated transformation of the code as a future endpoint:
+  - If your function lacks `return` statement, then MVP adds `return 200` for clarity
+  - If your code includes `if __name__ == __main__` construct, MVP completely removes it
+
+MVP road has rich functionality in the roadmap - from a mock layer of your component through in-flight performance benchmarking to automated drawing of the communication dagram of your architecture, so stay tuned.
+
+
 
 ## Requirements
 
-MVP requires a few restrictions for the Python project to be convertible.
+MVP sets a few restrictions for the Python project to be convertible.
 
-1. All files that include endpoint functions of imported as dependencies:
-  - Must not include executable code in global scope, except for simple initializations and imports.
-  - Relative imports must use `.`
-  - HTTP server code should be avoided - as MVP already converts your code to HTTP server, their conflict can cause unpredictable behaviour, highly unlikely leading to any good result.
+1. Avoid relative `import`
+2. Default values in a functions signature are not converted
+3. HTTP server code should be avoided in the code you're converting - which is quite obvious given the fact that MVP provides exactly this, HTTP server functionality :)
 
-2. Endpoint functions are _recommended_ to have flat signatures consisting of basic types (numerics, strings, arrays, lists, sets). This isn't mandatory though.
-
+Addiontally, functions being converted are _recommended_ to have signatures consisting of basic types - scalars, arrays, lists, dictionaries, sets). However, this isn't mandatory. If you really want to pass a thread descriptor or an object address via HTTP, nothing can stop you.
 
