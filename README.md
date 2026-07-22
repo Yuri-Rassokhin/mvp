@@ -74,3 +74,11 @@ MVP sets a few restrictions for the Python project to be convertible.
 
 Additionally, functions being converted are _recommended_ to have signatures consisting of basic types - scalars, arrays, lists, dictionaries, sets. However, this isn't mandatory. If you really want to pass a thread or socket via HTTP, nothing can stop you.
 
+## Installing MVP
+
+```bash
+git clone https://github.com/Yuri-Rassokhin/mvp.git
+cd mvp
+pip install -e .
+```
+

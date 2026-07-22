@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mvp-framework"
+version = "0.1.0"
+description = "MVP tool to manage lifecycle of a component mesh"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "typer",
+    "PyYAML",
+    "requests",
+    "python-dotenv",
+    "fastapi",
+    "uvicorn",
+    "rich",
+    "pydantic"
+]
+
+[project.scripts]
+mvp = "mvp:app"
