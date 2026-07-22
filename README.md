@@ -15,7 +15,7 @@ def increment(number: int)
 	return number+1
 ```
 
-To turn in to HTTP endpoint, put the following contract 'contract.yaml' in the same (or higher) directory:
+To turn it to HTTP endpoint, put the following contract 'contract.yaml' in the same (or higher) directory:
 
 ```yaml
 name: increment
