@@ -61,5 +61,5 @@ MVP sets a few restrictions for the Python project to be convertible.
 2. Default values in a functions signature are not converted
 3. HTTP server code should be avoided in the code you're converting - which is quite obvious given the fact that MVP provides exactly this, HTTP server functionality :)
 
-Addiontally, functions being converted are _recommended_ to have signatures consisting of basic types - scalars, arrays, lists, dictionaries, sets). However, this isn't mandatory. If you really want to pass a thread descriptor or an object address via HTTP, nothing can stop you.
+Additionally, functions being converted are _recommended_ to have signatures consisting of basic types - scalars, arrays, lists, dictionaries, sets). However, this isn't mandatory. If you really want to pass a thread descriptor or an object address via HTTP, nothing can stop you.
 
