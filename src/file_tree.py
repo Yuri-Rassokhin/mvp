@@ -20,7 +20,7 @@ def prepare_component_tree(component: str):
     orig_manifest_path = Path(component).expanduser().resolve()
 
     if not orig_manifest_path.exists():
-        typer.echo(f"ERROR: Manifest not found: {orig_manifest_path}")
+        typer.echo(f"ERROR: Contract {orig_manifest_path} not found")
         raise typer.Exit(1)
 
     # Прочитаем YAML для анализа source:

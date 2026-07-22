@@ -1,8 +1,10 @@
+import ast
+from rich.console import Console
 import os
+from platform import node
 import sys
 import inspect
 import importlib.util
-import ast
 from fastapi import FastAPI
 from fastapi.concurrency import run_in_threadpool
 from pydantic import create_model
@@ -12,6 +14,8 @@ import json
 from pathlib import Path
 import socket
 import uvicorn
+import types
+import ast_processor
 
 
 
@@ -33,15 +37,6 @@ def get_excluded_dirs() -> set:
                     excludes.add(cleaned.strip("/"))
 
     return excludes
-
-# Returns True if file has unsafe code in global scope, False otherwise
-def has_top_level_code(filepath):
-    with open(filepath, "r") as f:
-        node = ast.parse(f.read(), filename=filepath)
-        for stmt in node.body:
-            if not isinstance(stmt, (ast.Import, ast.ImportFrom, ast.FunctionDef, ast.ClassDef, ast.Assign, ast.AnnAssign, ast.Expr)):
-                return True
-    return False
 
 
 
@@ -71,46 +66,84 @@ def find_candidate_files(component_dir, allowed_funcs):
 
 
 
-def safe_import_module(filepath, component_root):
-    filepath = Path(filepath).resolve()
-    component_root = Path(component_root).resolve()
+# Scan the modules and create endpoints
+from fastapi.concurrency import run_in_threadpool
 
-    # Превращаем путь в dotted import, например:
-    # /home/opc/medical-symptome-preprocessor/src/endpoint/endpoint.py
-    # → endpoint.endpoint
-    relative = filepath.relative_to(component_root)
-    module_name = ".".join(relative.with_suffix("").parts)
 
-    # Добавляем component_root в sys.path
-    if str(component_root) not in sys.path:
-        sys.path.insert(0, str(component_root))
 
-    module = importlib.import_module(module_name)
+def load_module_from_ast(filepath, module_name, tree):
+    # Компилируем AST в байт-код
+    code_obj = compile(tree, filename=filepath, mode='exec')
+    
+    # Создаем объект модуля
+    module = types.ModuleType(module_name)
+    module.__file__ = str(filepath)
+    module.__name__ = module_name
+    
+    # Регистрируем в sys.modules, чтобы импорты работали
+    sys.modules[module_name] = module
+    
+    # Выполняем код в пространстве имен модуля
+    exec(code_obj, module.__dict__)
     return module
 
 
 
-# Scan the modules and create endpoints
-from fastapi.concurrency import run_in_threadpool
+def process_and_load_module(filepath, component_root):
+    # 1. Читаем файл один раз
+    with open(filepath, "r") as f:
+        source = f.read()
+    
+    # 2. Парсим
+    tree = ast.parse(source, filename=filepath)
+    
+    # 3. Проверяем безопасность (на том же объекте tree)
+    check_ast_safe(tree, filepath)
+
+    # 4. Модифицируем AST (process_tree уже готов)
+    tree = ast_processor.process_tree(tree, filepath)
+    
+    # 5. Генерируем уникальное имя (на основе пути, чтобы избежать коллизий)
+    rel_path = Path(filepath).relative_to(component_root)
+    module_name = "dynamic." + ".".join(rel_path.with_suffix("").parts)
+    
+    # 6. Загружаем
+    return load_module_from_ast(filepath, module_name, tree)
+
+# Вспомогательная проверка AST (без чтения файла)
+def check_ast_safe(tree, filepath):
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Pass)):
+            continue
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            if isinstance(node.value, (ast.Constant, ast.List, ast.Dict, ast.Tuple)):
+                continue
+        try:
+            offending_code = ast.unparse(node)
+            console = Console(force_terminal=True, width=10000)
+            console.print(f"[yellow]WARN: Unsafe global code in {filepath}:[/yellow]")
+            console.print(f"\n[yellow][italic]{offending_code}[/italic][/yellow]\n")
+        except Exception:
+            console.print(f"[yellow]WARN: Unsafe global code in {filepath}: {node}[/yellow]")
+        console.print(f"[yellow]WARN: Only imports, function definitions, and simple constant assignments are safe at the global level[/yellow]")
+        return False
+    return True
+
+
 
 def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_funcs: list, app: FastAPI, component_root: str):
-    modules = []
     candidate_files = find_candidate_files(component_dir, allowed_funcs)
-    
-    # Множество для отслеживания успешно созданных эндпоинтов
+    modules = []
+
+    # This is to track all successfully created endpoints
     activated_funcs = set()
 
     for filepath in candidate_files:
-        print(f"INFO: Converting {filepath} to endpoint")
-
-        if has_top_level_code(filepath):
-            raise RuntimeError(f"ERROR: Unsafe global code found in {filepath}, aborting")
-
-        try:
-            module = safe_import_module(filepath, component_dir)
-        except Exception as e:
-            print(f"ERROR: Failed to import {filepath}: {e}")
-            continue
+        module = process_and_load_module(filepath, component_dir)
+        
+        if not module:
+            print(f"ERROR: Skipping unsafe file {filepath}")
+            continue # Просто пропускаем, сервер продолжает жить
 
         modules.append(module)
 

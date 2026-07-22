@@ -23,9 +23,9 @@ import ast
 import importlib.util
 from types import ModuleType
 from typing import Set, List
-from endpoints import (find_candidate_files, has_top_level_code, scan_and_import_endpoints)
+from endpoints import scan_and_import_endpoints
 from mesh import (find_free_port, update_component_status, get_component_status)
-from modules import (load_and_register_module, is_safe_module, scan_and_register)
+#from modules import (load_and_register_module, is_safe_module, scan_and_register)
 
 
 # check CLI options
@@ -95,9 +95,6 @@ def stream_log():
 
 port = find_free_port()
 update_component_status(component_name, description, list(allowed_funcs), port, modules, instance_id)
-
-# This is a single-thread, blocking launcher
-#uvicorn.run(app, host="0.0.0.0", port=port)
 
 async def main():
     config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
