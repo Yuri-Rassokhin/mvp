@@ -1,6 +1,6 @@
 <div align="center">
-# What is MVP
-**Framework for the development of a minimal viable product as HTTP mesh of loosely coupled components**
+<h1>What is MVP</h1>
+<b>Framework for the development of a minimal viable product as HTTP mesh of loosely coupled components</b>
 </div>
 
 
