@@ -1,21 +1,24 @@
+<div align="center">
 # What is MVP
-Framework for quick development of a minimal viable product as HTTP mesh of loosely coupled microservices
+**Framework for the development of a minimal viable product as HTTP mesh of loosely coupled components**
+</div>
 
 
 
 ## How It Works
 
 MVP analyzes codebase of your Python project and turns specified functions into HTTP endpoints.
-To specify which functions to expose, create a simple YAML file called **contract** in the root directory of your project.
+MVP introduces the concept of a **contract** to employ a declarative paradigm for software developent.
+A contract is a simple YAML description of WHAT your code promises to do - as opposed to conventional functional paradigm where you describe HOW your code works.
 
-As a toy example, let's create a simple Python file:
+As a toy example, let's create Python "project" consisting of one file:
 
 ```python
 def increment(number: int)
 	return number+1
 ```
 
-To turn it to HTTP endpoint, put the following contract `contract.yaml` in the same (or higher) directory:
+To turn it to HTTP endpoint, create a contract `my_contract.yaml` in the same directory or higher:
 
 ```yaml
 name: increment
@@ -24,7 +27,7 @@ endpoints:
      - increment
 ```
 
-Then run `mvp add ./contract.yaml`. MVP will recursively scan current directory, finds `increment` function in the Python file, converts it to an HTTP endpoint, and exposes the endpoint. You can check its status:
+Now run `mvp add ./my_contract.yaml`, and MVP will recursively scan the directory, find `increment` function in the Python file, converts it to HTTP endpoint under the same name, and expose the endpoint via a vacant HTTP port. You can check the status of the endpoint:
 
 ```bash
 dev> mvp ls
@@ -35,16 +38,26 @@ Description  highly optimized library for mathematical increment
 http://10.0.0.200:8500/increment { "number": int }
 ```
 
-MVP automatically determined the lowest port starting from 8500 and exposed `increment` function as a conventional HTTP endpoint. You can now call it from CLI:
+MVP automatically determined the lowest port starting from 8500 and exposed `increment` function as a conventional HTTP endpoint with automatically determined input parameters. Now you can call it from CLI:
 
 ```bash
 dev> mvp call 2caf39411e18472980b3ece78ecb50b9 increment '{"number":42}'
 43
 ```
 
-You can also manage your endpoints from any Python code.
+You can manage your endpoints from your Python code as well. In the example below, your component spins up to process just one request, and then it is terminated:
 
-While the example above is trivial, MVP hides a lot of functionality for convenience of a developer:
+```python
+import mvp
+
+try:
+	component = mvp.add("./my_contract.yaml")
+	result = mvp.call(component, "increment", {"number":42})
+finally:
+	mvp.rm(component)
+```
+
+While the examples above are trivial, MVP hides a lot of functionality under the hood, for convenience of a developer:
 - Automated assignment of HTTP ports
 - Identification and notification about potentially unsafe code in the global scope (anything except import, declaration, and constant assignment)
 - Automated transformation of the code as a future endpoint. If your function lacks `return` statement, then MVP adds `return 200` for clarity. If your file includes `if __name__ == __main__` construct, MVP removes it
