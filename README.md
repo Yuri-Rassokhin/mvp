@@ -9,7 +9,7 @@
 
 MVP analyzes codebase of your Python project and turns specified functions into HTTP endpoints.
 MVP introduces the concept of a **contract** to employ a declarative paradigm for software developent.
-A contract is a simple YAML description of WHAT your code promises to do - as opposed to conventional functional paradigm where you describe HOW your code works.
+A contract is a simple YAML description of WHAT your code promises to do - as opposed to the conventional functional paradigm where you describe HOW your code works.
 
 As a toy example, let's create Python "project" consisting of one file:
 
@@ -68,7 +68,7 @@ MVP roadmap has rich functionality in the roadmap - from a mock layer of your co
 
 # Why MVP?
 
-While conventional HTTP frameworks such as FastAPI follow the **functional** paradigm, MVP follows **declarative** paradigm, taking you to a higher - and more pleasant - level of abstraction.
+While conventional HTTP frameworks such as FastAPI follow the **functional** paradigm, MVP follows the **declarative** paradigm, taking you to a higher - and more pleasant - level of abstraction.
 Instead of thinking HOW you code works in detail, you can focus on WHAT you code does at higher level - this is why the concept of a contract is crucial in MVP.
 
 Even more importantly, a contract provides MVP framework with complete information about your project.
