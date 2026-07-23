@@ -5,7 +5,7 @@
 
 
 
-## How It Works
+# How It Works
 
 MVP analyzes codebase of your Python project and turns specified functions into HTTP endpoints.
 MVP introduces the concept of a **contract** to employ a declarative paradigm for software developent.
@@ -66,7 +66,7 @@ MVP roadmap has rich functionality in the roadmap - from a mock layer of your co
 
 
 
-## Why MVP?
+# Why MVP?
 
 While conventional HTTP frameworks such as FastAPI follow the **functional** paradigm, MVP follows **declarative** paradigm, taking you to a higher - and more pleasant - level of abstraction.
 Instead of thinking HOW you code works in detail, you can focus on WHAT you code does at higher level - this is why the concept of a contract is crucial in MVP.
@@ -77,7 +77,7 @@ As MVP knows what fucntions must be exposed as HTTP, it can track correctness of
 Finally and most importantly, MVP's contracts literally set a contract for your collaborators. No matter what you're doing to your code, your teammates will be provided with the functionality guaranteed by the contract you announced via MVP. This turns collaborative software development to a loosely-coupled work, where none of you depends on another one, and waits for no one. You just declare your MVP contracts across your team and enjoy developing of your own part of code.
 
 
-## Requirements
+# Requirements
 
 MVP sets a few restrictions for the Python project to be convertible.
 
@@ -87,7 +87,7 @@ MVP sets a few restrictions for the Python project to be convertible.
 
 Additionally, functions being converted are _recommended_ to have signatures consisting of basic types - scalars, arrays, lists, dictionaries, sets. However, this isn't mandatory. If you really want to pass a thread or socket via HTTP, nothing can stop you.
 
-## Installing MVP
+# Installing MVP
 
 ```bash
 git clone https://github.com/Yuri-Rassokhin/mvp.git
