@@ -158,6 +158,7 @@ def launch_component_instance(work_dir: Path, manifest_path: Path):
     )
 
     typer.echo(f"INFO: Instance {unique_id} of '{instance['name']}' launched")
+    return unique_id
 
 
 

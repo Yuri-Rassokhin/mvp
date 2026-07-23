@@ -112,6 +112,7 @@ def process_and_load_module(filepath, component_root):
 
 # Вспомогательная проверка AST (без чтения файла)
 def check_ast_safe(tree, filepath):
+    console = Console(force_terminal=True, width=10000)
     for node in tree.body:
         if isinstance(node, (ast.Import, ast.ImportFrom, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Pass)):
             continue
@@ -120,7 +121,6 @@ def check_ast_safe(tree, filepath):
                 continue
         try:
             offending_code = ast.unparse(node)
-            console = Console(force_terminal=True, width=10000)
             console.print(f"[yellow]WARN: Unsafe global code in {filepath}:[/yellow]")
             console.print(f"\n[yellow][italic]{offending_code}[/italic][/yellow]\n")
         except Exception:
@@ -135,6 +135,8 @@ def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_func
     candidate_files = find_candidate_files(component_dir, allowed_funcs)
     modules = []
 
+    console = Console(force_terminal=True, width=10000)
+
     # This is to track all successfully created endpoints
     activated_funcs = set()
 
@@ -143,7 +145,7 @@ def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_func
         
         if not module:
             print(f"ERROR: Skipping unsafe file {filepath}")
-            continue # Просто пропускаем, сервер продолжает жить
+            continue
 
         modules.append(module)
 
@@ -153,7 +155,8 @@ def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_func
                     getattr(module, fname)()
                     print(f"INFO: Start function '{fname}' executed from {filepath}")
                 except Exception as e:
-                    print(f"ERROR: Start function '{fname}' failed in {filepath}: {e}")
+                    console.print(f"[red]ERROR: Start function '{fname}' failed in {filepath}: {e}[/red]")
+                    raise RuntimeError(f"Contract violation: start function '{fname}' failed in {filepath}: {e}")
 
         for name, func in inspect.getmembers(module, inspect.isfunction):
             if name in allowed_funcs:
@@ -177,7 +180,8 @@ def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_func
     # Проверка: все ли функции из манифеста были найдены
     missing_funcs = allowed_funcs - activated_funcs
     for func_name in missing_funcs:
-        print(f"WARN: Skipping endpoint '{func_name}' as it is specified in manifest, but not found in codebase")
+        console.print(f"[red]ERROR: Endpoint '{func_name}' is promised in contract, but missing in codebase[/red]")
+        raise RuntimeError(f"Contract violation: endpoint '{func_name}' promised in contract, but missing in codebase")
 
     return modules
 

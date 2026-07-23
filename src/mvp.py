@@ -57,21 +57,21 @@ def add(component: str) -> str:
         pass
 
     # 2) Запуск компонента
-    launch_component_instance(work_dir, manifest_path)
+    new_id = launch_component_instance(work_dir, manifest_path)
 
     # Небольшая пауза на регистрацию и поиск нового instance id/name
     time.sleep(1.5)
-    if status_path.exists():
-        try:
-            with open(status_path, "r") as f:
-                status = json.load(f)
-                new_entries = [s for s in status if s.get("id") not in existing_ids]
-                if new_entries:
-                    return new_entries[-1].get("name") or new_entries[-1].get("id")
-        except Exception:
-            pass
+#   if status_path.exists():
+#       try:
+#           with open(status_path, "r") as f:
+#               status = json.load(f)
+#               new_entries = [s for s in status if s.get("id") not in existing_ids]
+#                if new_entries:
+#                    return new_entries[-1].get("name") or new_entries[-1].get("id")
+#        except Exception:
+#            pass
 
-    return component_name
+    return new_id
 
 def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = None) -> Any:
     """
@@ -126,6 +126,10 @@ def rm(instance: str):
     except Exception as e:
         raise RuntimeError(f"Failed to load status file: {e}")
 
+    target_entry = next((entry for entry in status if entry.get("id") == instance), None)
+    if not target_entry:
+        raise RuntimeError(f"Instance {instance} not found in MVP registry, nothing to remove")
+
     try:
         ps_out = subprocess.check_output(["ps", "aux"], text=True)
         for line in ps_out.splitlines():
@@ -135,7 +139,7 @@ def rm(instance: str):
                 os.kill(pid, signal.SIGTERM)
                 break
     except Exception as e:
-        pass
+        print(f"DEBUG ERROR in process cleanup: {e}")  # <-- Увидим реальную ошибку
 
     status = [entry for entry in status if entry.get("id") != instance]
     with open(status_path, "w") as f:
