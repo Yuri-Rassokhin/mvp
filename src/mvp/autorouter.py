@@ -30,7 +30,7 @@ from .mesh import (find_free_port, update_component_status, get_component_status
 
 # check CLI options
 if len(sys.argv) < 3:
-    print("usage: python autorouter.py /path/to/manifest.yaml <instance_id>")
+    print("usage: python autorouter.py /path/to/contract_file.yaml <instance_id>")
     sys.exit(1)
 
 manifest_path = Path(sys.argv[1]).resolve()

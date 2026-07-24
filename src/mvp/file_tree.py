@@ -26,11 +26,11 @@ def prepare_component_tree(component: str):
         with open(orig_manifest_path, "r") as f:
             manifest = yaml.safe_load(f)
     except Exception as e:
-        typer.echo(f"ERROR: Failed to parse manifest: {e}")
+        typer.echo(f"ERROR: Failed to parse contract: {e}")
         raise typer.Exit(1)
 
     if not isinstance(manifest, dict):
-        typer.echo("ERROR: Manifest must be a YAML dictionary")
+        typer.echo("ERROR: Contract must be in YAML format")
         raise typer.Exit(1)
 
     # Если source отсутствует → работаем в локальной директории
@@ -88,7 +88,7 @@ def launch_component_instance(work_dir: Path, manifest_path: Path):
     required_keys = ["name", "endpoints"]
     for key in required_keys:
         if key not in manifest:
-            typer.echo(f"ERROR: Manifest missing required key: {key}")
+            typer.echo(f"ERROR: contract missing required key: '{key}'")
             raise typer.Exit(1)
 
     if not isinstance(manifest["endpoints"], list):

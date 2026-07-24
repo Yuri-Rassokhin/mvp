@@ -5,4 +5,6 @@ test/llama/__pycache__
 test/xgboost/__pycache__
 src/__pycache__
 src/server/__pycache__
+src/mvp/__pycache__/
+src/mvp_framework.egg-info/
 env.sh
