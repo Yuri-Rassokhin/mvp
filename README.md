@@ -48,7 +48,7 @@ dev> mvp call 2caf39411e18472980b3ece78ecb50b9 increment '{"number":42}'
 You can manage your endpoints from your Python code as well. In the example below, your component spins up to process just one request, and then it is terminated:
 
 ```python
-import mvp
+import mvp.framework
 
 try:
 	component = mvp.add("./my_contract.yaml")
