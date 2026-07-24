@@ -1,7 +1,0 @@
-name: fraud-scoring
-description: Scores banking transaction for a potential fraud
-endpoints:
-  - train
-  - quality
-  - influence
-  - score

@@ -15,7 +15,8 @@ from pathlib import Path
 import socket
 import uvicorn
 import types
-import ast_processor
+
+from . import ast_processor
 
 
 

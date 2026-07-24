@@ -1,8 +1,0 @@
-name: mvp-desktop
-description: web-based desktop for MVP
-endpoints:
-  - desktop
-  - attach
-  - detach
-start:
-  - launch

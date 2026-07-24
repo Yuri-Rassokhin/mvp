@@ -13,14 +13,13 @@ from rich.console import Console
 import requests
 import typer
 
-from server.oracle import add_instance, remove_instance
-from file_tree import (
+from .file_tree import (
     wait_for_instance_in_status,
     tail_log_until_uvicorn_ready,
     prepare_component_tree,
     launch_component_instance
 )
-from mesh import get_component_status
+from .mesh import get_component_status
 
 app = typer.Typer(help="MVP CLI tool to manage lifecycle of a component mesh")
 
@@ -145,7 +144,6 @@ def rm(instance: str):
     with open(status_path, "w") as f:
         json.dump(status, f, indent=2)
 
-    remove_instance(instance)
 
 
 # ==========================================

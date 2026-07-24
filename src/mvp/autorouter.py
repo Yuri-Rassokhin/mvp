@@ -23,9 +23,9 @@ import ast
 import importlib.util
 from types import ModuleType
 from typing import Set, List
-from endpoints import scan_and_import_endpoints
-from mesh import (find_free_port, update_component_status, get_component_status)
-#from modules import (load_and_register_module, is_safe_module, scan_and_register)
+
+from .endpoints import scan_and_import_endpoints
+from .mesh import (find_free_port, update_component_status, get_component_status)
 
 
 # check CLI options

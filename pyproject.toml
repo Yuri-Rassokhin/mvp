@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mvp-framework"
 version = "0.1.0"
-description = "MVP tool to manage lifecycle of a component mesh"
+description = "Framework for quick development of MVP as a mesh of loosely coupled microservices"
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
@@ -20,4 +20,4 @@ dependencies = [
 ]
 
 [project.scripts]
-mvp = "mvp:app"
+mvp = "mvp.framework:app"

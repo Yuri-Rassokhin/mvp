@@ -2,8 +2,6 @@ from pathlib import Path
 import time
 import typer
 
-from server.oracle import add_instance, remove_instance
-
 def prepare_component_tree(component: str):
     """
     Возвращает (work_dir, manifest_path).
@@ -115,14 +113,14 @@ def launch_component_instance(work_dir: Path, manifest_path: Path):
 
     # Запуск autorouter
     with open(tmp_log, "ab") as out:
-        process = subprocess.Popen(
-            [sys.executable, "-u", str(base_dir / "src" / "autorouter.py"), str(manifest_path), unique_id],
-            stdout=out,
-            stderr=out,
-            stdin=subprocess.DEVNULL,
-            close_fds=True,
-            start_new_session=True
-        )
+            process = subprocess.Popen(
+                [sys.executable, "-u", "-m", "mvp.autorouter", str(manifest_path), unique_id],
+                stdout=out,
+                stderr=out,
+                stdin=subprocess.DEVNULL,
+                close_fds=True,
+                start_new_session=True
+            )    
 
     # Waiting server to report its status
     tail_log_until_uvicorn_ready(tmp_log)
@@ -147,15 +145,6 @@ def launch_component_instance(work_dir: Path, manifest_path: Path):
 
     endpoint_strings.extend([ "contract", "syslog", "syslog-stream" ])
     endpoint_strings.sort()
-
-    # Add status
-    add_instance(
-        instance['name'],
-        unique_id,
-        instance['description'],
-        f"http://{instance['ip']}:{instance['port']}",
-        endpoint_strings
-    )
 
     typer.echo(f"INFO: Instance {unique_id} of '{instance['name']}' launched")
     return unique_id

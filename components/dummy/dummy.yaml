@@ -1,4 +1,0 @@
-name: dummy
-description: Dummy component for test purposes
-endpoints:
-  - diagnose
