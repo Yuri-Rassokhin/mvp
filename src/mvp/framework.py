@@ -132,7 +132,7 @@ def rm(instance: str):
     try:
         ps_out = subprocess.check_output(["ps", "aux"], text=True)
         for line in ps_out.splitlines():
-            if instance in line and "autorouter.py" in line:
+            if instance in line and "mvp.autorouter" in line: # DEBUG: THIS IS AN UGLY HACK, YOU GOTTA KILL IT BY PID STORED IN STATUS FILE
                 parts = line.split()
                 pid = int(parts[1])
                 os.kill(pid, signal.SIGTERM)
