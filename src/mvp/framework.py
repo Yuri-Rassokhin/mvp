@@ -1,15 +1,11 @@
 import os
 import sys
-import pathlib
 import signal
 import subprocess
 import time
-import uuid
 import json
 from typing import List, Optional, Any, Union
 from pathlib import Path
-from rich.table import Table
-from rich.console import Console
 import requests
 import typer
 
@@ -23,24 +19,6 @@ from .mesh import get_component_status
 
 app = typer.Typer(help="MVP CLI tool to manage lifecycle of a component mesh")
 
-# ==========================================
-# HELPER FUNCTIONS
-# ==========================================
-
-def _find_manager_target() -> str:
-    """Helper to find running manager instance name or ID from status registry."""
-    try:
-        instances = ls()
-        if isinstance(instances, list):
-            for entry in instances:
-                name = str(entry.get("name", "")).lower()
-                title = str(entry.get("title", "")).lower()
-                if "manager" in name or "manager" in title:
-                    return entry.get("id") or entry.get("name")
-    except Exception:
-        pass
-    return "manager"
-
 
 # ==========================================
 # CORE PROGRAMMATIC API (Для импорта в Python)
@@ -49,7 +27,7 @@ def _find_manager_target() -> str:
 def add(component: str) -> str:
     """
     Программный аналог CLI команды add.
-    Развертывает компонент и возвращает его ID или имя.
+    Развертывает компонент и возвращает его ID.
     """
     status_path = Path.home() / ".mvp" / "status"
     existing_ids = set()
@@ -163,55 +141,58 @@ def contract(target: str) -> Any:
     return call(target, "contract", {})
 
 
-def register(manager_or_component_spec: str, component_spec: Optional[str] = None) -> Any:
+def register(manager_id: str, component_path: str) -> str:
     """
-    Развертывает компонент (add), снимает с него контракт (contract)
-    и передает менеджеру (register).
-
-    Варианты вызова:
-      mvp.register("path/to/contract.yaml")  # Менеджер находится автоматически
-      mvp.register(manager, "path/to/contract.yaml")
+    Развертывает компонент (add), снимает с него контракт (contract),
+    регистрирует в конкретном менеджере по его ID и возвращает instance_id компонента.
     """
-    if component_spec is None:
-        target_path = manager_or_component_spec
-        mgr_target = _find_manager_target()
-    else:
-        mgr_target = manager_or_component_spec
-        target_path = component_spec
+    # 1. Запускаем компонент через add и получаем instance_id
+    instance_id = add(component_path)
 
-    # 1. Запускаем компонент через add
-    instance_id = add(target_path)
-
-    # 2. Снимаем с него контракт через contract
+    # 2. Снимаем контракт у созданного инстанса
     contract_data = contract(instance_id)
 
     # 3. Передаем полученный контракт в менеджер
-    reg_response = call(mgr_target, "register", {"contract": contract_data})
+    call(manager_id, "register", {"contract": contract_data})
 
-    # Прикрепляем instance_id к ответу для удобства последующего взаимодействия
-    if isinstance(reg_response, dict):
-        reg_response["instance_id"] = instance_id
-
-    return reg_response
+    # 4. Возвращаем instance_id
+    return instance_id
 
 
-def unregister(manager_or_title: str, title: Optional[str] = None) -> Any:
+def unregister(manager_id: str, instance_id: str) -> Any:
     """
-    Удаляет контракт компонента из реестра менеджера по его title.
-    Компонент остается запущенным, но исключается из внешней кооперации.
-
-    Варианты вызова:
-      mvp.unregister("Ethics & Conduct Coach")  # Менеджер находится автоматически
-      mvp.unregister(manager, "Ethics & Conduct Coach")
+    Убирает компонент из реестра конкретного менеджера,
+    после чего удаляет и останавливает сам инстанс компонента.
     """
-    if title is None:
-        comp_title = manager_or_title
-        mgr_target = _find_manager_target()
-    else:
-        mgr_target = manager_or_title
-        comp_title = title
+    # 1. Определяем title компонента из контракта или статуса
+    comp_title = None
+    try:
+        c_data = contract(instance_id)
+        if isinstance(c_data, dict):
+            comp_title = c_data.get("title") or c_data.get("info", {}).get("title")
+    except Exception:
+        pass
 
-    return call(mgr_target, "unregister", {"title": comp_title})
+    if not comp_title:
+        instances = ls()
+        if isinstance(instances, list):
+            for entry in instances:
+                if entry.get("id") == instance_id:
+                    comp_title = entry.get("title") or entry.get("name")
+                    break
+
+    # 2. Снимаем регистрацию в менеджере по title
+    unreg_res = None
+    if comp_title:
+        try:
+            unreg_res = call(manager_id, "unregister", {"title": comp_title})
+        except Exception as e:
+            print(f"Warning: Failed to unregister '{comp_title}' from manager: {e}")
+
+    # 3. Останавливаем процесс и удаляем запись
+    rm(instance_id)
+
+    return unreg_res or f"Instance {instance_id} unregistered and removed"
 
 
 # ==========================================
@@ -314,16 +295,13 @@ def cli_contract(target: str):
 
 @app.command(name="register")
 def cli_register(
-    manager_or_component_spec: str = typer.Argument(..., help="Path to component .yaml OR Manager target ID/name if manager is passed first"),
-    component_spec: Optional[str] = typer.Argument(None, help="Path to component .yaml if manager was specified as first arg")
+    manager_id: str = typer.Argument(..., help="Instance ID of the target Manager"),
+    component_path: str = typer.Argument(..., help="Path to the component .yaml file")
 ):
-    """Deploy component, fetch its contract, and register it in the manager."""
+    """Deploy component, fetch its contract, register it in manager, and return instance ID."""
     try:
-        res = register(manager_or_component_spec, component_spec)
-        if isinstance(res, (dict, list)):
-            typer.echo(json.dumps(res, indent=2, ensure_ascii=False))
-        else:
-            typer.echo(str(res))
+        instance_id = register(manager_id, component_path)
+        typer.echo(instance_id)
     except Exception as e:
         typer.echo(f"❌ Error: {e}")
         raise typer.Exit(1)
@@ -331,12 +309,12 @@ def cli_register(
 
 @app.command(name="unregister")
 def cli_unregister(
-    manager_or_title: str = typer.Argument(..., help="Component title to unregister OR Manager target ID/name if manager is passed first"),
-    title: Optional[str] = typer.Argument(None, help="Component title if manager was specified as first arg")
+    manager_id: str = typer.Argument(..., help="Instance ID of the target Manager"),
+    instance_id: str = typer.Argument(..., help="Instance ID of the component to unregister and remove")
 ):
-    """Unregister a component contract from the manager by title without stopping the process."""
+    """Unregister a component contract from manager and remove instance."""
     try:
-        res = unregister(manager_or_title, title)
+        res = unregister(manager_id, instance_id)
         if isinstance(res, (dict, list)):
             typer.echo(json.dumps(res, indent=2, ensure_ascii=False))
         else:
@@ -393,4 +371,3 @@ def ask(question: str):
 
 if __name__ == "__main__":
     app()
-
