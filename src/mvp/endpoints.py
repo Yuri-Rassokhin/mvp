@@ -168,15 +168,21 @@ def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_func
                     fields[param_name] = (ann, ...)
                 Model = create_model(f"{name.title()}Input", **fields)
 
+                # 1. Извлекаем возвращаемый тип функции из аннотации (например, Tier2AuditResponse)
+                return_annotation = sig.return_annotation
+                response_model = return_annotation if return_annotation != inspect._empty else None
+
                 # Создаем обертку, поддерживающую и sync, и async функции
                 async def endpoint(data: Model, _func=func):
                     if inspect.iscoroutinefunction(_func):
                         return await _func(**data.dict())
                     return await run_in_threadpool(_func, **data.dict())
 
-                app.post(f"/{name}", name=name)(endpoint)
+                # 2. Передаем response_model в декоратор FastAPI, если он задан
+                app.post(f"/{name}", name=name, response_model=response_model)(endpoint)
+                
                 activated_funcs.add(name)
-                print(f"INFO: Endpoint /{name} activated from {filepath}")
+                print(f"INFO: Endpoint /{name} activated from {filepath} (response_model: {response_model})")
 
     # Проверка: все ли функции из манифеста были найдены
     missing_funcs = allowed_funcs - activated_funcs
