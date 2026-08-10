@@ -159,11 +159,15 @@ def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_
                 return_annotation = sig.return_annotation
                 response_model = return_annotation if return_annotation != inspect._empty else None
 
-                # Создаем обертку, поддерживающую и sync, и async функции
-                async def endpoint(data: Model, _func=func):
-                    if inspect.iscoroutinefunction(_func):
-                        return await _func(**data.dict())
-                    return await run_in_threadpool(_func, **data.dict())
+                # Фабрика для создания эндпоинта (изолирует func в замыкании без попадания в сигнатуру FastAPI)
+                def make_endpoint(target_func):
+                    async def endpoint_handler(data: Model):
+                        if inspect.iscoroutinefunction(target_func):
+                            return await target_func(**data.dict())
+                        return await run_in_threadpool(target_func, **data.dict())
+                    return endpoint_handler
+
+                endpoint_wrapper = make_endpoint(func)
 
                 # --- НОВОЕ: Извлекаем визуальные настройки из YAML ---
                 ep_config = endpoints_config.get(name, {})
@@ -180,8 +184,8 @@ def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_
                     name=name, 
                     response_model=response_model,
                     openapi_extra=openapi_extra if openapi_extra else None
-                )(endpoint)
-                
+                )(endpoint_wrapper)
+
                 activated_funcs.add(name)
                 print(f"INFO: Endpoint /{name} activated from {filepath} (visibility: {ep_config.get('visibility', 'public')})")
 
