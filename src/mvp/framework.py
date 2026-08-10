@@ -24,13 +24,32 @@ from .mesh import get_component_status
 app = typer.Typer(help="MVP CLI tool to manage lifecycle of a component mesh")
 
 # ==========================================
+# HELPER FUNCTIONS
+# ==========================================
+
+def _find_manager_target() -> str:
+    """Helper to find running manager instance name or ID from status registry."""
+    try:
+        instances = ls()
+        if isinstance(instances, list):
+            for entry in instances:
+                name = str(entry.get("name", "")).lower()
+                title = str(entry.get("title", "")).lower()
+                if "manager" in name or "manager" in title:
+                    return entry.get("id") or entry.get("name")
+    except Exception:
+        pass
+    return "manager"
+
+
+# ==========================================
 # CORE PROGRAMMATIC API (Для импорта в Python)
 # ==========================================
 
 def add(component: str) -> str:
     """
     Программный аналог CLI команды add.
-    Развертывает компонент и возвращает его имя
+    Развертывает компонент и возвращает его ID или имя.
     """
     status_path = Path.home() / ".mvp" / "status"
     existing_ids = set()
@@ -58,19 +77,11 @@ def add(component: str) -> str:
     # 2) Запуск компонента
     new_id = launch_component_instance(work_dir, manifest_path)
 
-    # Небольшая пауза на регистрацию и поиск нового instance id/name
+    # Небольшая пауза на регистрацию
     time.sleep(1.5)
-#   if status_path.exists():
-#       try:
-#           with open(status_path, "r") as f:
-#               status = json.load(f)
-#               new_entries = [s for s in status if s.get("id") not in existing_ids]
-#                if new_entries:
-#                    return new_entries[-1].get("name") or new_entries[-1].get("id")
-#        except Exception:
-#            pass
 
     return new_id
+
 
 def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = None) -> Any:
     """
@@ -109,9 +120,11 @@ def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = No
     except Exception as e:
         raise RuntimeError(f"❌ Request failed: {e}")
 
+
 def ls(component: Optional[str] = None):
     """Возвращает список статусов компонентов."""
     return get_component_status(component)
+
 
 def rm(instance: str):
     """Останавливает и удаляет инстанс."""
@@ -132,18 +145,73 @@ def rm(instance: str):
     try:
         ps_out = subprocess.check_output(["ps", "aux"], text=True)
         for line in ps_out.splitlines():
-            if instance in line and "mvp.autorouter" in line: # DEBUG: THIS IS AN UGLY HACK, YOU GOTTA KILL IT BY PID STORED IN STATUS FILE
+            if instance in line and "mvp.autorouter" in line:
                 parts = line.split()
                 pid = int(parts[1])
                 os.kill(pid, signal.SIGTERM)
                 break
     except Exception as e:
-        print(f"DEBUG ERROR in process cleanup: {e}")  # <-- Увидим реальную ошибку
+        print(f"DEBUG ERROR in process cleanup: {e}")
 
     status = [entry for entry in status if entry.get("id") != instance]
     with open(status_path, "w") as f:
         json.dump(status, f, indent=2)
 
+
+def contract(target: str) -> Any:
+    """Запрашивает контракт напрямую у запущенного компонента по его ID/имени."""
+    return call(target, "contract", {})
+
+
+def register(manager_or_component_spec: str, component_spec: Optional[str] = None) -> Any:
+    """
+    Развертывает компонент (add), снимает с него контракт (contract)
+    и передает менеджеру (register).
+
+    Варианты вызова:
+      mvp.register("path/to/contract.yaml")  # Менеджер находится автоматически
+      mvp.register(manager, "path/to/contract.yaml")
+    """
+    if component_spec is None:
+        target_path = manager_or_component_spec
+        mgr_target = _find_manager_target()
+    else:
+        mgr_target = manager_or_component_spec
+        target_path = component_spec
+
+    # 1. Запускаем компонент через add
+    instance_id = add(target_path)
+
+    # 2. Снимаем с него контракт через contract
+    contract_data = contract(instance_id)
+
+    # 3. Передаем полученный контракт в менеджер
+    reg_response = call(mgr_target, "register", {"contract": contract_data})
+
+    # Прикрепляем instance_id к ответу для удобства последующего взаимодействия
+    if isinstance(reg_response, dict):
+        reg_response["instance_id"] = instance_id
+
+    return reg_response
+
+
+def unregister(manager_or_title: str, title: Optional[str] = None) -> Any:
+    """
+    Удаляет контракт компонента из реестра менеджера по его title.
+    Компонент остается запущенным, но исключается из внешней кооперации.
+
+    Варианты вызова:
+      mvp.unregister("Ethics & Conduct Coach")  # Менеджер находится автоматически
+      mvp.unregister(manager, "Ethics & Conduct Coach")
+    """
+    if title is None:
+        comp_title = manager_or_title
+        mgr_target = _find_manager_target()
+    else:
+        mgr_target = manager_or_title
+        comp_title = title
+
+    return call(mgr_target, "unregister", {"title": comp_title})
 
 
 # ==========================================
@@ -156,6 +224,7 @@ def cli_add(component: str):
     res = add(component)
     typer.echo(f"✅ Component deployed successfully. Target identifier: {res}")
 
+
 @app.command(name="rm")
 def cli_rm(instance: str):
     """Stop a component and delete it from the registry."""
@@ -165,6 +234,7 @@ def cli_rm(instance: str):
     except Exception as e:
         typer.echo(f"❌ Error: {e}")
         raise typer.Exit(1)
+
 
 @app.command(name="ls")
 def cli_ls(component: Optional[str] = None):
@@ -200,6 +270,7 @@ def cli_ls(component: Optional[str] = None):
         else:
             typer.echo("URL not found")
 
+
 @app.command(name="call")
 def cli_call(
     target: str,
@@ -225,6 +296,55 @@ def cli_call(
     except Exception as e:
         typer.echo(str(e))
         raise typer.Exit(1)
+
+
+@app.command(name="contract")
+def cli_contract(target: str):
+    """Fetch contract JSON from a deployed component instance."""
+    try:
+        res = contract(target)
+        if isinstance(res, (dict, list)):
+            typer.echo(json.dumps(res, indent=2, ensure_ascii=False))
+        else:
+            typer.echo(str(res))
+    except Exception as e:
+        typer.echo(f"❌ Error: {e}")
+        raise typer.Exit(1)
+
+
+@app.command(name="register")
+def cli_register(
+    manager_or_component_spec: str = typer.Argument(..., help="Path to component .yaml OR Manager target ID/name if manager is passed first"),
+    component_spec: Optional[str] = typer.Argument(None, help="Path to component .yaml if manager was specified as first arg")
+):
+    """Deploy component, fetch its contract, and register it in the manager."""
+    try:
+        res = register(manager_or_component_spec, component_spec)
+        if isinstance(res, (dict, list)):
+            typer.echo(json.dumps(res, indent=2, ensure_ascii=False))
+        else:
+            typer.echo(str(res))
+    except Exception as e:
+        typer.echo(f"❌ Error: {e}")
+        raise typer.Exit(1)
+
+
+@app.command(name="unregister")
+def cli_unregister(
+    manager_or_title: str = typer.Argument(..., help="Component title to unregister OR Manager target ID/name if manager is passed first"),
+    title: Optional[str] = typer.Argument(None, help="Component title if manager was specified as first arg")
+):
+    """Unregister a component contract from the manager by title without stopping the process."""
+    try:
+        res = unregister(manager_or_title, title)
+        if isinstance(res, (dict, list)):
+            typer.echo(json.dumps(res, indent=2, ensure_ascii=False))
+        else:
+            typer.echo(str(res))
+    except Exception as e:
+        typer.echo(f"❌ Error: {e}")
+        raise typer.Exit(1)
+
 
 @app.command()
 def log(id: str, follow: bool = typer.Option(False, "-f", "--follow", help="Follow the log output")):
@@ -252,8 +372,9 @@ def log(id: str, follow: bool = typer.Option(False, "-f", "--follow", help="Foll
             else:
                 typer.echo(f.read())
     except Exception as e:
-                        typer.echo(f"❌ Failed to read log file: {e}")
-                        raise typer.Exit(1)
+        typer.echo(f"❌ Failed to read log file: {e}")
+        raise typer.Exit(1)
+
 
 @app.command()
 def switch(component: str, tier: str = typer.Argument(..., help="Target tier: mock | prod | preprod")):
@@ -263,10 +384,13 @@ def switch(component: str, tier: str = typer.Argument(..., help="Target tier: mo
         raise typer.Exit(1)
     typer.echo(f"🔄 Switching {component} to tier: {tier}")
 
+
 @app.command()
 def ask(question: str):
     """Ask the AI assistant about available components or their functionality."""
     typer.echo(f"🤖 Asking AI: {question}")
 
+
 if __name__ == "__main__":
     app()
+
