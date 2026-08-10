@@ -85,14 +85,19 @@ def launch_component_instance(work_dir: Path, manifest_path: Path):
     with open(manifest_path, "r") as f:
         manifest = yaml.safe_load(f)
 
-    required_keys = ["name", "endpoints"]
-    for key in required_keys:
-        if key not in manifest:
-            typer.echo(f"ERROR: contract missing required key: '{key}'")
-            raise typer.Exit(1)
+    # --- ИСПРАВЛЕННАЯ ЛОГИКА ВАЛИДАЦИИ ---
+    # Проверяем наличие title ИЛИ name (для обратной совместимости)
+    if "title" not in manifest and "name" not in manifest:
+        typer.echo("ERROR: contract missing required key: 'title' (or 'name')")
+        raise typer.Exit(1)
+        
+    if "endpoints" not in manifest:
+        typer.echo("ERROR: contract missing required key: 'endpoints'")
+        raise typer.Exit(1)
 
-    if not isinstance(manifest["endpoints"], list):
-        typer.echo("ERROR: 'endpoints' must be a list of strings")
+    # Поддерживаем и старый формат (list), и новый (dict) для endpoints
+    if not isinstance(manifest["endpoints"], (list, dict)):
+        typer.echo("ERROR: 'endpoints' must be a list or a dictionary")
         raise typer.Exit(1)
 
     if "start" in manifest and not isinstance(manifest["start"], list):
@@ -138,7 +143,12 @@ def launch_component_instance(work_dir: Path, manifest_path: Path):
 
     # Convert io → readable endpoint strings
     endpoint_strings = []
-    for ep in instance["endpoints"]:
+    # Обрабатываем случай, если endpoints - это dict
+    instance_endpoints = instance.get("endpoints", [])
+    if isinstance(instance_endpoints, dict):
+        instance_endpoints = list(instance_endpoints.keys())
+        
+    for ep in instance_endpoints:
         sig = instance.get("io", {}).get(ep, {}).get("inputs", {})
         formatted = ", ".join(f"{k}: {v}" for k, v in sig.items())
         endpoint_strings.append(f"{ep} {{{formatted}}}")
@@ -146,7 +156,9 @@ def launch_component_instance(work_dir: Path, manifest_path: Path):
     endpoint_strings.extend([ "contract", "syslog", "syslog-stream" ])
     endpoint_strings.sort()
 
-    typer.echo(f"INFO: Instance {unique_id} of '{instance['name']}' launched")
+    # Берем title или name
+    instance_name = instance.get('title', instance.get('name', 'unknown'))
+    typer.echo(f"INFO: Instance {unique_id} of '{instance_name}' launched")
     return unique_id
 
 
@@ -233,4 +245,3 @@ def wait_for_instance_in_status(instance_id: str, timeout=15.0):
         time.sleep(0.5)
         
     raise RuntimeError(f"ERROR: Instance {instance_id} has not appeared after {timeout}s timeout")
-

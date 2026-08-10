@@ -18,8 +18,6 @@ import types
 
 from . import ast_processor
 
-
-
 # Read config with excluded subdirectories such as venv, etc
 def get_excluded_dirs() -> set:
     """
@@ -39,15 +37,13 @@ def get_excluded_dirs() -> set:
 
     return excludes
 
-
-
 # Return list of files with endpoint functions
 def find_candidate_files(component_dir, allowed_funcs):
     excludes = get_excluded_dirs()
     candidates = []
     
     for root, dirs, files in os.walk(component_dir):
-        # 🔑 Отсекаем ненужные папки, чтобы os.walk в них даже не заходил
+        # Отсекаем ненужные папки, чтобы os.walk в них даже не заходил
         dirs[:] = [d for d in dirs if d not in excludes]
         
         for filename in files:
@@ -65,13 +61,6 @@ def find_candidate_files(component_dir, allowed_funcs):
                     
     return candidates
 
-
-
-# Scan the modules and create endpoints
-from fastapi.concurrency import run_in_threadpool
-
-
-
 def load_module_from_ast(filepath, module_name, tree):
     # Компилируем AST в байт-код
     code_obj = compile(tree, filename=filepath, mode='exec')
@@ -87,8 +76,6 @@ def load_module_from_ast(filepath, module_name, tree):
     # Выполняем код в пространстве имен модуля
     exec(code_obj, module.__dict__)
     return module
-
-
 
 def process_and_load_module(filepath, component_root):
     # 1. Читаем файл один раз
@@ -130,9 +117,9 @@ def check_ast_safe(tree, filepath):
         return False
     return True
 
-
-
-def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_funcs: list, app: FastAPI, component_root: str):
+# Измененная сигнатура: принимаем endpoints_config (dict) вместо allowed_funcs (set)
+def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_funcs: list, app: FastAPI, component_root: str):
+    allowed_funcs = set(endpoints_config.keys())
     candidate_files = find_candidate_files(component_dir, allowed_funcs)
     modules = []
 
@@ -142,7 +129,7 @@ def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_func
     activated_funcs = set()
 
     for filepath in candidate_files:
-        module = process_and_load_module(filepath, component_dir)
+        module = process_and_load_module(filepath, component_root)
         
         if not module:
             print(f"ERROR: Skipping unsafe file {filepath}")
@@ -168,7 +155,7 @@ def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_func
                     fields[param_name] = (ann, ...)
                 Model = create_model(f"{name.title()}Input", **fields)
 
-                # 1. Извлекаем возвращаемый тип функции из аннотации (например, Tier2AuditResponse)
+                # 1. Извлекаем возвращаемый тип функции из аннотации
                 return_annotation = sig.return_annotation
                 response_model = return_annotation if return_annotation != inspect._empty else None
 
@@ -178,11 +165,25 @@ def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_func
                         return await _func(**data.dict())
                     return await run_in_threadpool(_func, **data.dict())
 
-                # 2. Передаем response_model в декоратор FastAPI, если он задан
-                app.post(f"/{name}", name=name, response_model=response_model)(endpoint)
+                # --- НОВОЕ: Извлекаем визуальные настройки из YAML ---
+                ep_config = endpoints_config.get(name, {})
+                openapi_extra = {}
+                
+                if "visual" in ep_config:
+                    openapi_extra["x-visual-type"] = ep_config["visual"].get("type")
+                    openapi_extra["x-visual-title"] = ep_config["visual"].get("title")
+                    openapi_extra["x-visual-comment"] = ep_config["visual"].get("comment")
+
+                # 2. Передаем response_model и openapi_extra в декоратор FastAPI
+                app.post(
+                    f"/{name}", 
+                    name=name, 
+                    response_model=response_model,
+                    openapi_extra=openapi_extra if openapi_extra else None
+                )(endpoint)
                 
                 activated_funcs.add(name)
-                print(f"INFO: Endpoint /{name} activated from {filepath} (response_model: {response_model})")
+                print(f"INFO: Endpoint /{name} activated from {filepath} (visibility: {ep_config.get('visibility', 'public')})")
 
     # Проверка: все ли функции из манифеста были найдены
     missing_funcs = allowed_funcs - activated_funcs
@@ -191,5 +192,3 @@ def scan_and_import_endpoints(component_dir: str, allowed_funcs: set, start_func
         raise RuntimeError(f"Contract violation: endpoint '{func_name}' promised in contract, but missing in codebase")
 
     return modules
-
-

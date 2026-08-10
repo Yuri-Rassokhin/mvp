@@ -50,8 +50,8 @@ def add(component: str) -> str:
         import yaml
         with open(manifest_path, "r") as mf:
             m_data = yaml.safe_load(mf)
-            if isinstance(m_data, dict) and "name" in m_data:
-                component_name = m_data["name"]
+            if isinstance(m_data, dict):
+                component_name = m_data.get("title", m_data.get("name", component_name))
     except Exception:
         pass
 
@@ -179,9 +179,9 @@ def cli_ls(component: Optional[str] = None):
 
     for entry in filtered:
         typer.echo("────────────────────────────────────────")
-        typer.echo(f"Component    {entry.get('name', '[unknown]')}")
+        typer.echo(f"Component    {entry.get('title', entry.get('name', '[unknown]'))}")
         typer.echo(f"Instance     {entry.get('id', '[unknown]')}")
-        typer.echo(f"Description  {entry.get('description', '')}")
+        typer.echo(f"Subtitle     {entry.get('subtitle', entry.get('description', ''))}")
 
         ip = entry.get("ip", "0.0.0.0")
         port = entry.get("port", "")

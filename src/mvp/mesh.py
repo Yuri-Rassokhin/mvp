@@ -2,9 +2,7 @@ import socket
 from pathlib import Path
 import json
 import inspect
-from typing import Optional, List, Dict
-
-
+from typing import Optional, List, Dict, Any
 
 def find_free_port(start=8500, end=8999):
     for port in range(start, end + 1):
@@ -16,13 +14,7 @@ def find_free_port(start=8500, end=8999):
                 continue
     raise RuntimeError("no free port found in the range")
 
-
-
 def get_component_status(component: Optional[str] = None) -> List[Dict]:
-    """
-    Возвращает список компонент из ~/.mvp/status.
-    Если передан component (по name), фильтрует по нему.
-    """
     status_path = Path.home() / ".mvp" / "status"
     if not status_path.exists():
         return []
@@ -44,26 +36,11 @@ def get_component_status(component: Optional[str] = None) -> List[Dict]:
 
     return components
 
-
-
-def type_name(annotation):
-    try:
-        return annotation.__name__
-    except AttributeError:
-        return str(annotation).replace("typing.", "")
-
-
-
-import inspect
-from typing import Any
-
 def type_name(annotation: Any) -> str:
     try:
         return annotation.__name__
     except AttributeError:
         return str(annotation).replace("typing.", "")
-
-
 
 def get_signatures(modules, endpoints):
     signatures = {}
@@ -73,10 +50,10 @@ def get_signatures(modules, endpoints):
         for module in modules:
             func = getattr(module, fname, None)
             if func:
-                break  # нашли, дальше не ищем
+                break
 
         if not func:
-            continue  # не нашли ни в одном модуле
+            continue
 
         sig = inspect.signature(func)
 
@@ -93,9 +70,7 @@ def get_signatures(modules, endpoints):
 
     return signatures
 
-
-
-def update_component_status(name, description, endpoints, port, modules, instance_id):
+def update_component_status(title, subtitle, endpoints, port, modules, instance_id):
     endpoints.extend([ "contract", "syslog", "syslog-stream"])
     status_path = Path.home() / ".mvp" / "status"
     status_path.parent.mkdir(parents=True, exist_ok=True)
@@ -112,9 +87,9 @@ def update_component_status(name, description, endpoints, port, modules, instanc
         status = []
 
     st = {
-        "name": name,
+        "title": title,
+        "subtitle": subtitle,
         "id": instance_id,
-        "description": description,
         "endpoints": endpoints,
         "port": port,
         "ip": socket.gethostbyname(socket.gethostname()),
@@ -134,4 +109,3 @@ def update_component_status(name, description, endpoints, port, modules, instanc
 
     with open(status_path, "w") as f:
         json.dump(status, f, indent=2)
-

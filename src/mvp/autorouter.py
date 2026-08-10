@@ -1,4 +1,5 @@
 import sys
+import copy
 import subprocess
 from pathlib import Path
 
@@ -47,34 +48,60 @@ component_dir = manifest_path.parent
 if str(component_dir) not in sys.path:
     sys.path.insert(0, str(component_dir))
 
-# === Загрузка манифеста ===
+
+
+### Loading and processing contract file ###
 with manifest_path.open("r") as f:
     manifest = yaml.safe_load(f)
 
-component_name = manifest.get("name", "unknown-component")
-description = manifest.get("description", "")
-allowed_funcs = set(manifest.get("endpoints", []))
+# Читаем новые поля (с fallback на старые, чтобы не сломать текущие компоненты)
+component_title = manifest.get("title", manifest.get("name", "unknown-component"))
+component_subtitle = manifest.get("subtitle", manifest.get("description", ""))
 start_funcs = manifest.get("start", [])
 
+raw_endpoints = manifest.get("endpoints", {})
+if isinstance(raw_endpoints, list):
+    endpoints_config = {ep: {"visibility": "public"} for ep in raw_endpoints}
+else:
+    endpoints_config = raw_endpoints
+
+allowed_funcs = set(endpoints_config.keys())
+public_funcs = {
+    name for name, cfg in endpoints_config.items() 
+    if cfg.get("visibility", "public") == "public"
+}
+
 # Create FastAPI server ===
-app = FastAPI(title=component_name, description=description)
+# FastAPI автоматически положит их в секцию "info", но мы еще добавим их в корень
+app = FastAPI(title=component_title, description=component_subtitle)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-modules = scan_and_import_endpoints(component_dir, allowed_funcs, start_funcs, app, component_root)
+modules = scan_and_import_endpoints(component_dir, endpoints_config, start_funcs, app, component_root)
 
 
 
 @app.post("/contract")
 def intro_manifest():
     """
-    Возвращает runtime-манифест для текущего instance из ~/.mvp/status
+    Возвращает OpenAPI JSON, отфильтрованный для public эндпоинтов,
+    плюс глобальные title и subtitle на верхнем уровне.
     """
-    global instance_id
-    print(f"Instance: {instance_id}")
+    schema = copy.deepcopy(app.openapi())
 
-    try:
-        return get_component_status(instance_id)
-    except Exception as e:
-        return {"error": str(e)}
+    if "info" not in schema:
+        schema["info"] = {}
+
+    schema["info"]["title"] = component_title
+    schema["info"]["description"] = component_subtitle
+    schema["info"].pop("version", None)
+
+    filtered_paths = {}
+    for path, path_item in schema.get("paths", {}).items():
+        ep_name = path.lstrip("/")
+        if ep_name in public_funcs:
+            filtered_paths[path] = path_item
+
+    schema["paths"] = filtered_paths
+    return schema
 
 
 
@@ -94,7 +121,7 @@ def stream_log():
     return StreamingResponse(event_stream(), media_type="text/plain")
 
 port = find_free_port()
-update_component_status(component_name, description, list(allowed_funcs), port, modules, instance_id)
+update_component_status(component_title, component_subtitle, list(allowed_funcs), port, modules, instance_id)
 
 async def main():
     config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
