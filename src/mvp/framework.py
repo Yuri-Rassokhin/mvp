@@ -142,21 +142,36 @@ def contract(target: str) -> Any:
 
 
 def register(manager_id: str, component_path: str) -> str:
-    """
-    Развертывает компонент (add), снимает с него контракт (contract),
-    регистрирует в конкретном менеджере по его ID и возвращает instance_id компонента.
-    """
-    # 1. Запускаем компонент через add и получаем instance_id
+    # 1. Запускаем компонент
     instance_id = add(component_path)
 
-    # 2. Снимаем контракт у созданного инстанса
+    # 2. Получаем текущий список компонентов из статус-файла
+    instances = ls()
+    # Находим наш инстанс
+    instance = next((i for i in instances if i.get("id") == instance_id), None)
+
+    # 3. Формируем base_url
+    base_url = ""
+    if instance and "port" in instance and "ip" in instance:
+        base_url = f"http://{instance['ip']}:{instance['port']}"
+
+    # 4. Снимаем контракт
     contract_data = contract(instance_id)
 
-    # 3. Передаем полученный контракт в менеджер
-    call(manager_id, "register", {"contract": contract_data})
+    # =========================================================
+    # ВНЕДРЯЕМ INSTANCE ID ПРЯМО В ТЕЛО КОНТРАКТА
+    # =========================================================
+    if isinstance(contract_data, dict):
+        contract_data["instance_id"] = instance_id
 
-    # 4. Возвращаем instance_id
+    # 5. Шлем в менеджер
+    call(manager_id, "register", {
+        "contract": contract_data,
+        "base_url": base_url
+    })
+
     return instance_id
+
 
 
 def unregister(manager_id: str, instance_id: str) -> Any:
