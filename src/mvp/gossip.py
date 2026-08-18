@@ -5,7 +5,7 @@ import httpx
 from typing import Dict, Any, Optional
 from pydantic import BaseModel
 
-
+MESH_PROTOCOL_VERSION = "1.0"
 
 class InstanceState(BaseModel):
     base_url: str
@@ -35,20 +35,28 @@ class GossipMesh:
                 local_updated_at=time.time()
             )
         else:
-            self.registry[self.instance_id].contract = local_contract # Обновляем на случай изменения public_funcs
+            self.registry[self.instance_id].contract = local_contract
             self.registry[self.instance_id].heartbeat += 1
             self.registry[self.instance_id].local_updated_at = time.time()
 
     async def bootstrap(self):
-        print(f"[{self.instance_id}] Bootstrapping...")
+        print(f"[{self.instance_id}] Bootstrapping (Mesh v{MESH_PROTOCOL_VERSION})...")
+        # Добавляем заголовок с версией
+        headers = {"X-Mesh-Version": MESH_PROTOCOL_VERSION}
+        
         for port in range(self.port_range[0], self.port_range[1]):
             if str(port) in self.base_url: continue
             try:
-                response = await self.http_client.post(f"http://127.0.0.1:{port}/contract", timeout=0.5)
-                if response.status_code == 200:
-                    print(f"[{self.instance_id}] Seed found at port {port}")
+                response = await self.http_client.post(
+                    f"http://127.0.0.1:{port}/contract",
+                    headers=headers,
+                    timeout=0.5
+                )
+                # Строго проверяем, что сосед ответил нужной версией протокола
+                if response.status_code == 200 and response.headers.get("x-mesh-version") == MESH_PROTOCOL_VERSION:
+                    print(f"[{self.instance_id}] Seed found at port {port} (Mesh v{MESH_PROTOCOL_VERSION})")
                     return
-            except:
+            except Exception:
                 pass
 
     def merge_registry(self, incoming_registry: Dict[str, InstanceState]):
@@ -64,9 +72,16 @@ class GossipMesh:
                 self.registry[i_id].local_updated_at = current_time
 
     async def gossip_loop(self, get_local_contract_func):
+        # Заголовок для защиты самого процесса обмена слухами
+        headers = {"X-Mesh-Version": MESH_PROTOCOL_VERSION}
+        
         while True:
             await asyncio.sleep(1.5)
-            self._update_self_state(get_local_contract_func())
+            try:
+                self._update_self_state(get_local_contract_func())
+            except Exception as e:
+                print(f"[{self.instance_id}] Error generating contract: {e}")
+                continue
             
             peers = [i_id for i_id in self.registry.keys() if i_id != self.instance_id]
             if not peers: continue
@@ -75,8 +90,12 @@ class GossipMesh:
             target_url = f"{self.registry[target_id].base_url}/_gossip"
             payload = GossipPayload(sender_id=self.instance_id, registry=self.registry)
             try:
-                await self.http_client.post(target_url, content=payload.model_dump_json())
-            except:
+                await self.http_client.post(
+                    target_url, 
+                    content=payload.model_dump_json(),
+                    headers=headers
+                )
+            except Exception:
                 pass
 
     async def reaper_loop(self):

@@ -4,8 +4,9 @@ import asyncio
 import subprocess
 from pathlib import Path
 from contextlib import asynccontextmanager
+from fastapi import Response, Request, HTTPException
 
-from .gossip import GossipMesh, GossipPayload
+from .gossip import GossipMesh, GossipPayload, MESH_PROTOCOL_VERSION
 
 # Make sys.path to see root directory of the component as a parent package
 manifest_path = sys.argv[1]
@@ -95,12 +96,17 @@ update_component_status(component_title, component_subtitle, list(allowed_funcs)
 
 # --- ШАГ 4: Регистрация роутов ---
 
+# --- ШАГ 4: Регистрация роутов ---
+
 @app.post("/contract")
-def intro_manifest():
+def intro_manifest(response: Response): # <--- Инжектим Response
     """
     Возвращает OpenAPI JSON, отфильтрованный для public эндпоинтов,
     плюс глобальные title и subtitle на верхнем уровне.
     """
+    # Добавляем наш заголовок в ответ!
+    response.headers["X-Mesh-Version"] = MESH_PROTOCOL_VERSION
+
     schema = copy.deepcopy(app.openapi())
 
     if "info" not in schema:
@@ -119,6 +125,22 @@ def intro_manifest():
     schema["paths"] = filtered_paths
     return schema
 
+
+@app.post("/_gossip", include_in_schema=False)
+async def receive_gossip(payload: GossipPayload, request: Request):
+    """Скрытый эндпоинт, который принимают стейты от других модулей"""
+
+    # Жестко отклоняем слухи от модулей с другой версией протокола (или без нее)
+    client_version = request.headers.get("X-Mesh-Version")
+    if client_version != MESH_PROTOCOL_VERSION:
+         raise HTTPException(
+             status_code=426, # Upgrade Required
+             detail=f"Incompatible mesh protocol version. Expected {MESH_PROTOCOL_VERSION}"
+         )
+
+    mesh.merge_registry(payload.registry)
+    return {"status": "ok"}
+
 @app.post("/syslog", response_class=PlainTextResponse)
 def get_log():
     result = subprocess.run(["mvp", "log", instance_id], capture_output=True, text=True)
@@ -133,12 +155,6 @@ def stream_log():
             yield line.decode("utf-8")
 
     return StreamingResponse(event_stream(), media_type="text/plain")
-
-@app.post("/_gossip", include_in_schema=False)
-async def receive_gossip(payload: GossipPayload):
-    """Скрытый эндпоинт, который принимают стейты от других модулей"""
-    mesh.merge_registry(payload.registry)
-    return {"status": "ok"}
 
 @app.get("/network", include_in_schema=False)
 def get_global_network():
