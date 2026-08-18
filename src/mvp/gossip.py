@@ -39,25 +39,32 @@ class GossipMesh:
             self.registry[self.instance_id].heartbeat += 1
             self.registry[self.instance_id].local_updated_at = time.time()
 
-    async def bootstrap(self):
+    async def bootstrap(self, get_local_contract_func):
         print(f"[{self.instance_id}] Bootstrapping (Mesh v{MESH_PROTOCOL_VERSION})...")
-        # Добавляем заголовок с версией
         headers = {"X-Mesh-Version": MESH_PROTOCOL_VERSION}
+        
+        # Обновляем наш локальный стейт перед тем, как стучаться к соседям
+        self._update_self_state(get_local_contract_func())
+        payload = GossipPayload(sender_id=self.instance_id, registry=self.registry)
         
         for port in range(self.port_range[0], self.port_range[1]):
             if str(port) in self.base_url: continue
             try:
+                # Стучимся сразу в системный эндпоинт, кидая о себе слух!
                 response = await self.http_client.post(
-                    f"http://127.0.0.1:{port}/contract",
+                    f"http://127.0.0.1:{port}/_gossip",
+                    content=payload.model_dump_json(),
                     headers=headers,
-                    timeout=0.5
+                    timeout=2.0
                 )
-                # Строго проверяем, что сосед ответил нужной версией протокола
-                if response.status_code == 200 and response.headers.get("x-mesh-version") == MESH_PROTOCOL_VERSION:
-                    print(f"[{self.instance_id}] Seed found at port {port} (Mesh v{MESH_PROTOCOL_VERSION})")
+                
+                if response.status_code == 200:
+                    print(f"[{self.instance_id}] Seed found at port {port} and successfully joined!")
                     return
-            except Exception:
+            except Exception as e:
                 pass
+
+
 
     def merge_registry(self, incoming_registry: Dict[str, InstanceState]):
         current_time = time.time()

@@ -73,19 +73,28 @@ port = find_free_port()
 base_url = f"http://127.0.0.1:{port}"
 mesh = GossipMesh(instance_id=instance_id, base_url=base_url)
 
+
+
 # --- ШАГ 2: Определение Lifespan хука ---
-# Launch Gossip background processes at start-up
+
+
+
+# Launch Gossip processes at startup
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Код до yield выполняется при startup
-    await mesh.bootstrap()
-    asyncio.create_task(mesh.gossip_loop(get_local_contract_func=intro_manifest))
-    asyncio.create_task(mesh.reaper_loop())
-    
-    yield # Здесь приложение работает и принимает HTTP-запросы
-    
-    # Код после yield выполняется при shutdown (остановке)
+    async def delayed_startup():
+        await asyncio.sleep(3.0) 
+        # ПЕРЕДАЕМ НАШУ ФУНКЦИЮ ЗДЕСЬ:
+        await mesh.bootstrap(get_local_contract_func=build_local_contract)
+        
+        asyncio.create_task(mesh.gossip_loop(get_local_contract_func=build_local_contract))
+        asyncio.create_task(mesh.reaper_loop())
+
+    asyncio.create_task(delayed_startup())
+    yield
     print(f"[{instance_id}] Shutting down...")
+
+    
 
 # --- ШАГ 3: Создание FastAPI ---
 app = FastAPI(title=component_title, description=component_subtitle, lifespan=lifespan)
@@ -96,17 +105,8 @@ update_component_status(component_title, component_subtitle, list(allowed_funcs)
 
 # --- ШАГ 4: Регистрация роутов ---
 
-# --- ШАГ 4: Регистрация роутов ---
-
-@app.post("/contract")
-def intro_manifest(response: Response): # <--- Инжектим Response
-    """
-    Возвращает OpenAPI JSON, отфильтрованный для public эндпоинтов,
-    плюс глобальные title и subtitle на верхнем уровне.
-    """
-    # Добавляем наш заголовок в ответ!
-    response.headers["X-Mesh-Version"] = MESH_PROTOCOL_VERSION
-
+def build_local_contract():
+    """Чистая функция генерации контракта (без HTTP-контекста)"""
     schema = copy.deepcopy(app.openapi())
 
     if "info" not in schema:
@@ -126,12 +126,22 @@ def intro_manifest(response: Response): # <--- Инжектим Response
     return schema
 
 
+
+@app.post("/contract")
+async def intro_manifest(response: Response, request: Request):
+    # Принудительно читаем тело, чтобы FastAPI не пытался его парсить как JSON и не падал
+    await request.body() 
+    response.headers["X-Mesh-Version"] = MESH_PROTOCOL_VERSION
+    return build_local_contract()
+
+
+
 @app.post("/_gossip", include_in_schema=False)
 async def receive_gossip(payload: GossipPayload, request: Request):
     """Скрытый эндпоинт, который принимают стейты от других модулей"""
 
     # Жестко отклоняем слухи от модулей с другой версией протокола (или без нее)
-    client_version = request.headers.get("X-Mesh-Version")
+    client_version = request.headers.get("x-mesh-version")
     if client_version != MESH_PROTOCOL_VERSION:
          raise HTTPException(
              status_code=426, # Upgrade Required
@@ -156,7 +166,7 @@ def stream_log():
 
     return StreamingResponse(event_stream(), media_type="text/plain")
 
-@app.get("/network", include_in_schema=False)
+@app.api_route("/network", methods=["GET", "POST"], include_in_schema=False)
 def get_global_network():
     """
     Отдает сырой словарь всех модулей в сети и их эндпоинтов.
@@ -164,7 +174,9 @@ def get_global_network():
     """
     return {i_id: state.model_dump() for i_id, state in mesh.registry.items()}
 
-@app.get("/openapi")
+
+
+@app.api_route("/openapi", methods=["GET", "POST"])
 def get_global_openapi():
     """Склеивает контракты всех живых модулей в единый OpenAPI JSON"""
     global_schema = {"openapi": "3.0.0", "info": {"title": "MVP Mesh Network"}, "paths": {}}
