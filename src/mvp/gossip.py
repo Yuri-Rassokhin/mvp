@@ -1,10 +1,11 @@
-# gossip.py
 import asyncio
 import time
 import random
 import httpx
 from typing import Dict, Any, Optional
 from pydantic import BaseModel
+
+
 
 class InstanceState(BaseModel):
     base_url: str
@@ -43,7 +44,7 @@ class GossipMesh:
         for port in range(self.port_range[0], self.port_range[1]):
             if str(port) in self.base_url: continue
             try:
-                response = await self.http_client.get(f"http://127.0.0.1:{port}/contract", timeout=0.5)
+                response = await self.http_client.post(f"http://127.0.0.1:{port}/contract", timeout=0.5)
                 if response.status_code == 200:
                     print(f"[{self.instance_id}] Seed found at port {port}")
                     return
