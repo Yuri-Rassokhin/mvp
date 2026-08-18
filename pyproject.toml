@@ -16,7 +16,8 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "rich",
-    "pydantic"
+    "pydantic",
+    "httpx"
 ]
 
 [project.scripts]

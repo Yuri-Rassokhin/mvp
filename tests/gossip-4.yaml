@@ -1,0 +1,5 @@
+name: Module 4
+description: Fourth module
+endpoints:
+    module_4:
+        visibility: public

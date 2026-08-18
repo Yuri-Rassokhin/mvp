@@ -1,0 +1,5 @@
+name: Module 3
+description: Third module
+endpoints:
+    module_3:
+        visibility: public

@@ -1,0 +1,5 @@
+name: Module 2
+description: Second module
+endpoints:
+    module_2:
+        visibility: public

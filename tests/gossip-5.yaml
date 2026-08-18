@@ -1,0 +1,5 @@
+name: Module 5
+description: Fifth module
+endpoints:
+    module_5:
+        visibility: public

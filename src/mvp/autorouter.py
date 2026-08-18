@@ -1,7 +1,14 @@
 import sys
 import copy
+import asyncio
 import subprocess
 from pathlib import Path
+
+
+
+from .gossip import GossipMesh, GossipPayload
+
+
 
 # Make sys.path to see root directory of the component as a parent package
 manifest_path = sys.argv[1]
@@ -12,7 +19,7 @@ if component_root not in sys.path:
 import os
 import inspect
 import importlib.util
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import (PlainTextResponse, StreamingResponse)
 from pydantic import create_model
 import yaml
@@ -75,6 +82,7 @@ public_funcs = {
 # FastAPI автоматически положит их в секцию "info", но мы еще добавим их в корень
 app = FastAPI(title=component_title, description=component_subtitle)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
 modules = scan_and_import_endpoints(component_dir, endpoints_config, start_funcs, app, component_root)
 
 
@@ -110,6 +118,8 @@ def get_log():
     result = subprocess.run(["mvp", "log", instance_id], capture_output=True, text=True)
     return result.stdout
 
+
+
 @app.post("/syslog-stream")
 def stream_log():
     process = subprocess.Popen(["mvp", "log", instance_id, "-f"], stdout=subprocess.PIPE)
@@ -120,7 +130,63 @@ def stream_log():
 
     return StreamingResponse(event_stream(), media_type="text/plain")
 
+
+
+@app.post("/_gossip", include_in_schema=False)
+async def receive_gossip(payload: GossipPayload):
+    """Скрытый эндпоинт, который принимают стейты от других модулей"""
+    mesh.merge_registry(payload.registry)
+    return {"status": "ok"}
+
+
+
+@app.get("/network", include_in_schema=False)
+def get_global_network():
+    """
+    Отдает сырой словарь всех модулей в сети и их эндпоинтов.
+    Может использоваться другими модулями для Client-Side роутинга.
+    """
+    # Возвращаем Pydantic модели как dict
+    return {i_id: state.model_dump() for i_id, state in mesh.registry.items()}
+
+
+
+@app.get("/openapi")
+def get_global_openapi():
+    """Склеивает контракты всех живых модулей в единый OpenAPI JSON"""
+    global_schema = {"openapi": "3.0.0", "info": {"title": "MVP Mesh Network"}, "paths": {}}
+
+    for state in mesh.registry.values():
+        # state.contract - это то, что отдает intro_manifest() каждого модуля
+        module_paths = state.contract.get("paths", {})
+
+        # Чтобы избежать коллизий путей (если у двух модулей есть /process),
+        # добавляем instance_id в начало пути (namespace)
+        for path, path_info in module_paths.items():
+            namespaced_path = f"/{state.contract.get('info', {}).get('title', 'module')}{path}"
+            global_schema["paths"][namespaced_path] = path_info
+
+    return global_schema
+
+
+
+# Launch Gossip background processes at start-up
+@app.on_event("startup")
+async def startup_mesh():
+    """При старте FastAPI запускаем фоновые таски Gossip"""
+    await mesh.bootstrap()
+    # Передаем ссылку на intro_manifest, чтобы Gossip_loop 
+    # брал всегда свежий локальный контракт для рассылки
+    asyncio.create_task(mesh.gossip_loop(get_local_contract_func=intro_manifest))
+    asyncio.create_task(mesh.reaper_loop())
+
+
+
 port = find_free_port()
+
+base_url = f"http://127.0.0.1:{port}"
+mesh = GossipMesh(instance_id=instance_id, base_url=base_url)
+
 update_component_status(component_title, component_subtitle, list(allowed_funcs), port, modules, instance_id)
 
 async def main():
