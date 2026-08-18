@@ -78,8 +78,9 @@ class GossipMesh:
                 self.registry[i_id] = inc_state
                 self.registry[i_id].local_updated_at = current_time
 
+
+
     async def gossip_loop(self, get_local_contract_func):
-        # Заголовок для защиты самого процесса обмена слухами
         headers = {"X-Mesh-Version": MESH_PROTOCOL_VERSION}
         
         while True:
@@ -90,20 +91,46 @@ class GossipMesh:
                 print(f"[{self.instance_id}] Error generating contract: {e}")
                 continue
             
+            payload = GossipPayload(sender_id=self.instance_id, registry=self.registry)
+            
+            # --- ШАГ 1: Поиск новых соседей на неизвестных портах ---
+            # Периодически (например, в каждом 3-м цикле) простукиваем все порты,
+            # чтобы найти узлы, которые запустились позже нас.
+            if random.random() < 0.3:  # 30% шанс просканировать сеть
+                for port in range(self.port_range[0], self.port_range[1]):
+                    if str(port) in self.base_url: continue
+                    # Если мы уже знаем этот порт (он есть в реестре), не стучимся вслепую
+                    if any(str(port) in state.base_url for state in self.registry.values()):
+                        continue
+                        
+                    try:
+                        # Отправляем слух "в пустоту". Если там есть наш узел - он ответит и добавит нас!
+                        await self.http_client.post(
+                            f"http://127.0.0.1:{port}/_gossip",
+                            content=payload.model_dump_json(),
+                            headers=headers,
+                            timeout=1.0
+                        )
+                    except Exception:
+                        pass
+            
+            # --- ШАГ 2: Стандартная отправка слухов УЖЕ ИЗВЕСТНЫМ соседям ---
             peers = [i_id for i_id in self.registry.keys() if i_id != self.instance_id]
             if not peers: continue
             
             target_id = random.choice(peers)
             target_url = f"{self.registry[target_id].base_url}/_gossip"
-            payload = GossipPayload(sender_id=self.instance_id, registry=self.registry)
             try:
                 await self.http_client.post(
                     target_url, 
                     content=payload.model_dump_json(),
-                    headers=headers
+                    headers=headers,
+                    timeout=1.0
                 )
             except Exception:
                 pass
+
+
 
     async def reaper_loop(self):
         while True:
