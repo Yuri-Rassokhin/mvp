@@ -178,14 +178,48 @@ def get_global_network():
 
 @app.api_route("/openapi", methods=["GET", "POST"])
 def get_global_openapi():
-    """Склеивает контракты всех живых модулей в единый OpenAPI JSON"""
-    global_schema = {"openapi": "3.0.0", "info": {"title": "MVP Mesh Network"}, "paths": {}}
+    """Склеивает контракты всех живых модулей в формат legacy MVP Manager"""
+    
+    # 1. Формируем костяк старого формата
+    global_schema = {
+        "title": "MVP Framework Manager",
+        "modules": [],
+        "components": {
+            "schemas": {}
+        }
+    }
 
-    for state in mesh.registry.values():
+    for instance_id, state in mesh.registry.items():
+        # Извлекаем метаданные из локального контракта (OpenAPI формата)
+        info = state.contract.get("info", {})
+        title = info.get("title", "Unknown Module")
+        subtitle = info.get("description", "")
+        
+        # 2. Формируем объект модуля в старом формате
+        module_entry = {
+            "instance_id": instance_id,
+            "title": title,
+            "subtitle": subtitle,
+            "base_url": state.base_url,
+            "endpoints": {}
+        }
+        
+        # Переносим эндпоинты (paths -> endpoints)
         module_paths = state.contract.get("paths", {})
         for path, path_info in module_paths.items():
-            namespaced_path = f"/{state.contract.get('info', {}).get('title', 'module')}{path}"
-            global_schema["paths"][namespaced_path] = path_info
+            module_entry["endpoints"][path] = path_info
+            
+        global_schema["modules"].append(module_entry)
+        
+        # 3. Сливаем схемы (schemas) в единый глобальный пул
+        # Это критично для фронтенда и кодогенерации
+        module_components = state.contract.get("components", {})
+        module_schemas = module_components.get("schemas", {})
+        
+        for schema_name, schema_def in module_schemas.items():
+            # Если схема уже есть, просто перезаписываем (предполагаем, 
+            # что стандартные схемы вроде HTTPValidationError идентичны)
+            global_schema["components"]["schemas"][schema_name] = schema_def
 
     return global_schema
 
