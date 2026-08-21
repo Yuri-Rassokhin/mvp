@@ -5,6 +5,10 @@ import httpx
 from typing import Dict, Any, Optional
 from pydantic import BaseModel
 
+### SETTINGS ###
+REAPER_PATIENCE = 30.0 # How long the Reaper will wait before killing inactive nodes
+
+
 MESH_PROTOCOL_VERSION = "1.0"
 
 class InstanceState(BaseModel):
@@ -25,6 +29,7 @@ class GossipMesh:
         self.registry: Dict[str, InstanceState] = {}
         self.tombstones: Dict[str, float] = {}
         self.http_client = httpx.AsyncClient(timeout=2.0)
+        self.started_at = time.time()
 
     def _update_self_state(self, local_contract: Dict[str, Any]):
         if self.instance_id not in self.registry:
@@ -85,10 +90,21 @@ class GossipMesh:
 
     async def gossip_loop(self, get_local_contract_func):
         headers = {
-                "X-Mesh-Version": MESH_PROTOCOL_VERSION,
-                "Content-Type": "application/json"
-                }
-        
+            "X-Mesh-Version": MESH_PROTOCOL_VERSION,
+            "Content-Type": "application/json"
+        }
+
+        # Локальная функция для фоновой отправки без блокировки цикла
+        def fire_and_forget(url: str, payload_str: str):
+            async def _send():
+                try:
+                    await self.http_client.post(
+                        url, content=payload_str, headers=headers, timeout=1.0
+                    )
+                except Exception:
+                    pass
+            asyncio.create_task(_send())
+
         while True:
             await asyncio.sleep(1.5)
             try:
@@ -96,54 +112,45 @@ class GossipMesh:
             except Exception as e:
                 print(f"[{self.instance_id}] Error generating contract: {e}")
                 continue
+
+            # Сериализуем payload один раз за цикл
+            payload_json = GossipPayload(
+                sender_id=self.instance_id, registry=self.registry
+            ).model_dump_json()
+
+            # --- ШАГ 1: Асинхронный поиск новых соседей ---
+            time_alive = time.time() - self.started_at
+            scan_chance = 1.0 if time_alive < 30.0 else 0.1
             
-            payload = GossipPayload(sender_id=self.instance_id, registry=self.registry)
-            
-            # --- ШАГ 1: Поиск новых соседей на неизвестных портах ---
-            # Периодически (например, в каждом 3-м цикле) простукиваем все порты,
-            # чтобы найти узлы, которые запустились позже нас.
-            if random.random() < 0.3:  # 30% шанс просканировать сеть
+            if random.random() < scan_chance:
                 for port in range(self.port_range[0], self.port_range[1]):
                     if str(port) in self.base_url: continue
-                    # Если мы уже знаем этот порт (он есть в реестре), не стучимся вслепую
                     if any(str(port) in state.base_url for state in self.registry.values()):
                         continue
-                        
-                    try:
-                        # Отправляем слух "в пустоту". Если там есть наш узел - он ответит и добавит нас!
-                        await self.http_client.post(
-                            f"http://127.0.0.1:{port}/_gossip",
-                            content=payload.model_dump_json(),
-                            headers=headers,
-                            timeout=1.0
-                        )
-                    except Exception:
-                        pass
-            
-            # --- ШАГ 2: Стандартная отправка слухов УЖЕ ИЗВЕСТНЫМ соседям ---
+
+                    # Запускаем в фоне! Цикл больше не ждет таймаутов!
+                    fire_and_forget(f"http://127.0.0.1:{port}/_gossip", payload_json)
+
+            # --- ШАГ 2: Отправка сплетен случайному соседу ---
             peers = [i_id for i_id in self.registry.keys() if i_id != self.instance_id]
-            if not peers: continue
-            
-            target_id = random.choice(peers)
-            target_url = f"{self.registry[target_id].base_url}/_gossip"
-            try:
-                await self.http_client.post(
-                    target_url, 
-                    content=payload.model_dump_json(),
-                    headers=headers,
-                    timeout=1.0
-                )
-            except Exception:
-                pass
+            if peers:
+                target_id = random.choice(peers)
+                target_url = f"{self.registry[target_id].base_url}/_gossip"
+                fire_and_forget(target_url, payload_json)
 
 
 
     async def reaper_loop(self):
         while True:
-            await asyncio.sleep(1.0)
-            current_time = time.time()
-            dead_nodes = [i_id for i_id, state in self.registry.items() 
-                         if i_id != self.instance_id and (current_time - state.local_updated_at > 5.0)]
-            for d_id in dead_nodes:
-                del self.registry[d_id]
-                self.tombstones[d_id] = current_time
+            await asyncio.sleep(5.0)
+            now = time.time()
+            dead_nodes = []
+            for i_id, state in self.registry.items():
+                if i_id == self.instance_id: continue
+                # Увеличиваем терпение до 30 секунд
+                if now - state.local_updated_at > REAPER_PATIENCE:
+                    dead_nodes.append(i_id)
+            
+            for d in dead_nodes:
+                del self.registry[d]
+

@@ -82,19 +82,14 @@ mesh = GossipMesh(instance_id=instance_id, base_url=base_url)
 # Launch Gossip processes at startup
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async def delayed_startup():
-        await asyncio.sleep(3.0) 
-        # ПЕРЕДАЕМ НАШУ ФУНКЦИЮ ЗДЕСЬ:
-        await mesh.bootstrap(get_local_contract_func=build_local_contract)
-        
-        asyncio.create_task(mesh.gossip_loop(get_local_contract_func=build_local_contract))
-        asyncio.create_task(mesh.reaper_loop())
-
-    asyncio.create_task(delayed_startup())
-    yield
-    print(f"[{instance_id}] Shutting down...")
-
+    asyncio.create_task(mesh.gossip_loop(get_local_contract_func=build_local_contract))
+    asyncio.create_task(mesh.reaper_loop())
     
+    yield # Сервер сразу открывает порт
+    
+    print(f"[{instance_id}] Shutting down...")
+    
+
 
 # --- ШАГ 3: Создание FastAPI ---
 app = FastAPI(title=component_title, description=component_subtitle, lifespan=lifespan)
