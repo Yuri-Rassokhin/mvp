@@ -41,7 +41,10 @@ class GossipMesh:
 
     async def bootstrap(self, get_local_contract_func):
         print(f"[{self.instance_id}] Bootstrapping (Mesh v{MESH_PROTOCOL_VERSION})...")
-        headers = {"X-Mesh-Version": MESH_PROTOCOL_VERSION}
+        headers = {
+                "X-Mesh-Version": MESH_PROTOCOL_VERSION,
+                "Content-Type": "application/json"
+                }
         
         # Обновляем наш локальный стейт перед тем, как стучаться к соседям
         self._update_self_state(get_local_contract_func())
@@ -81,7 +84,10 @@ class GossipMesh:
 
 
     async def gossip_loop(self, get_local_contract_func):
-        headers = {"X-Mesh-Version": MESH_PROTOCOL_VERSION}
+        headers = {
+                "X-Mesh-Version": MESH_PROTOCOL_VERSION,
+                "Content-Type": "application/json"
+                }
         
         while True:
             await asyncio.sleep(1.5)
