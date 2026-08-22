@@ -43,6 +43,8 @@ def type_name(annotation: Any) -> str:
         return str(annotation).replace("typing.", "")
 
 def get_signatures(modules, endpoints):
+    if not modules: return {}
+
     signatures = {}
 
     for fname in endpoints:

@@ -3,3 +3,6 @@ description: First module
 endpoints:
     module_1:
         visibility: public
+        mock:
+          timeout: 0
+          value: "mock value for Module 1"

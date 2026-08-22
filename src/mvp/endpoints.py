@@ -131,7 +131,6 @@ def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_
 
     for filepath in candidate_files:
         module = process_and_load_module(filepath, component_root)
-
         if not module:
             print(f"ERROR: Skipping unsafe file {filepath}")
             continue
@@ -159,97 +158,27 @@ def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_
                 return_annotation = sig.return_annotation
                 response_model = return_annotation if return_annotation != inspect._empty else None
 
-                ep_config = endpoints_config.get(name, {})
-
-                # Фабрика для создания эндпоинта (изолирует func в замыкании)
-                def make_endpoint(target_func, endpoint_config, comp_dir, ret_ann):
-                    mock_cfg = endpoint_config.get("mock")
-
-                    # Логика извлечения mock-данных
-                    def resolve_mock():
-                        if not mock_cfg:
-                            return None
-
-                        # Вариант 1: Inline YAML
-                        if "value" in mock_cfg:
-                            return mock_cfg["value"]
-
-                        # Вариант 2: External File
-                        if "path" in mock_cfg:
-                            mock_path = os.path.join(comp_dir, mock_cfg["path"])
-                            try:
-                                with open(mock_path, "r") as f:
-                                    if mock_path.endswith(".yaml") or mock_path.endswith(".yml"):
-                                        return yaml.safe_load(f)
-                                    return json.load(f)
-                            except Exception as ex:
-                                console.print(f"[red]ERROR: Failed to load mock from {mock_path}: {ex}[/red]")
-                                return {"error": f"Missing mock file: {mock_path}"}
-
-                        # Вариант 3: Auto-generation
-                        if mock_cfg.get("type") == "auto":
-                            try:
-                                from polyfactory.factories.pydantic_factory import ModelFactory
-                                # Если возвращаемый тип - это Pydantic модель
-                                if hasattr(ret_ann, "model_fields") or hasattr(ret_ann, "__fields__"):
-                                    class DynamicFactory(ModelFactory):
-                                        __model__ = ret_ann
-                                    # Возвращаем объект, FastAPI сам сериализует его в JSON
-                                    return DynamicFactory.build()
-                            except ImportError:
-                                console.print("[yellow]WARN: polyfactory is not installed. Fallback auto-mock to {}. Run: pip install polyfactory[/yellow]")
-                            except Exception as ex:
-                                console.print(f"[yellow]WARN: Auto-mock failed: {ex}. Fallback to {{}}[/yellow]")
-                            return {}
-
-                        return None
-
-                    # Кешируем значение при старте сервера, если refresh == False
-                    cached_mock = None
-                    if mock_cfg and not mock_cfg.get("refresh", False):
-                        cached_mock = resolve_mock()
-
-                    # Инжектим Response, чтобы менять HTTP заголовки
-                    async def endpoint_handler(data: Model, response: Response):
-                        try:
-                            # Circuit Breaker: Таймаут 15 секунд на бизнес-логику
-                            if inspect.iscoroutinefunction(target_func):
-                                return await asyncio.wait_for(target_func(**data.dict()), timeout=15.0)
-                            return await asyncio.wait_for(run_in_threadpool(target_func, **data.dict()), timeout=15.0)
-
-                        except Exception as e:
-                            # Если есть mock-конфиг — спасаем ситуацию
-                            if mock_cfg:
-                                console.print(f"[yellow]⚠️  [MOCK TIER] /{name} failed ({type(e).__name__}: {e}). Switching to fallback.[/yellow]")
-                                response.headers["X-MVP-Mock-Fallback"] = "true"
-                                response.headers["X-MVP-Original-Error"] = str(e)
-
-                                # Обновляем данные, если включен refresh
-                                if mock_cfg.get("refresh", False) or cached_mock is None:
-                                    return resolve_mock()
-                                return cached_mock
-
-                            # Если мока нет — честно падаем
-                            raise e
-
+                def make_endpoint(target_func):
+                    async def endpoint_handler(data: Model):
+                        # Логика выполняется без таймаутов, Gateway сам оборвет ожидание
+                        if inspect.iscoroutinefunction(target_func):
+                            return await target_func(**data.dict())
+                        return await run_in_threadpool(target_func, **data.dict())
                     return endpoint_handler
 
-                endpoint_wrapper = make_endpoint(func, ep_config, component_dir, return_annotation)
-
-                # Извлекаем визуальные настройки из YAML
+                ep_config = endpoints_config.get(name, {})
                 openapi_extra = {}
                 if "visual" in ep_config:
                     openapi_extra["x-visual-type"] = ep_config["visual"].get("type")
                     openapi_extra["x-visual-title"] = ep_config["visual"].get("title")
                     openapi_extra["x-visual-comment"] = ep_config["visual"].get("comment")
 
-                # Передаем response_model и openapi_extra в декоратор FastAPI
                 app.post(
-                    f"/{name}",
-                    name=name,
+                    f"/{name}", 
+                    name=name, 
                     response_model=response_model,
                     openapi_extra=openapi_extra if openapi_extra else None
-                )(endpoint_wrapper)
+                )(make_endpoint(func))
 
                 activated_funcs.add(name)
                 print(f"INFO: Endpoint /{name} activated from {filepath} (visibility: {ep_config.get('visibility', 'public')})")

@@ -61,82 +61,11 @@ def add(component: str) -> str:
     return new_id
 
 
-def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = None) -> Any:
-    """
-    Программный аналог CLI команды call.
-    Принимает python-объект (dict, list) или строку в качестве полезной нагрузки (payload),
-    делает запрос к эндпоинту и возвращает разобранный JSON или текст ответа.
-    """
-    if data is None:
-        data = {}
-
-    status_path = Path.home() / ".mvp" / "status"
-    if not status_path.exists():
-        raise RuntimeError("❌ Status file not found.")
-
-    with open(status_path, "r") as f:
-        status = json.load(f)
-
-    # Ищем по ID или имени
-    match = next((s for s in status if s.get("id") == target or s.get("name") == target), None)
-    if not match:
-        raise ValueError(f"❌ No instance found with ID or name '{target}'")
-
-    port = match.get("port")
-    if not port:
-        raise RuntimeError(f"❌ No port found for instance '{target}'")
-
-    url = f"http://127.0.0.1:{port}/{endpoint}"
-
-    try:
-        resp = requests.post(url, json=data)
-        if resp.headers.get("X-MVP-Mock-Fallback") == "true":
-            err_msg = resp.headers.get("X-MVP-Original-Error", "Timeout/Error")
-            print(f"⚠️  [MOCK TIER ACTIVE] Fallback triggered! Original failure: {err_msg}", file=sys.stderr)
-        resp.raise_for_status()
-        try:
-            return resp.json()
-        except json.JSONDecodeError:
-            return resp.text
-    except Exception as e:
-        raise RuntimeError(f"❌ Request failed: {e}")
-
 
 def ls(component: Optional[str] = None):
     """Возвращает список статусов компонентов."""
     return get_component_status(component)
 
-
-def rm(instance: str):
-    """Останавливает и удаляет инстанс."""
-    status_path = Path.home() / ".mvp" / "status"
-    if not status_path.exists():
-        raise RuntimeError("status file not found")
-
-    try:
-        with open(status_path, "r") as f:
-            status = json.load(f)
-    except Exception as e:
-        raise RuntimeError(f"Failed to load status file: {e}")
-
-    target_entry = next((entry for entry in status if entry.get("id") == instance), None)
-    if not target_entry:
-        raise RuntimeError(f"Instance {instance} not found in MVP registry, nothing to remove")
-
-    try:
-        ps_out = subprocess.check_output(["ps", "aux"], text=True)
-        for line in ps_out.splitlines():
-            if instance in line and "mvp.autorouter" in line:
-                parts = line.split()
-                pid = int(parts[1])
-                os.kill(pid, signal.SIGTERM)
-                break
-    except Exception as e:
-        print(f"DEBUG ERROR in process cleanup: {e}")
-
-    status = [entry for entry in status if entry.get("id") != instance]
-    with open(status_path, "w") as f:
-        json.dump(status, f, indent=2)
 
 
 def contract(target: str) -> Any:
@@ -177,6 +106,101 @@ def register(manager_id: str, component_path: str) -> str:
 
 
 
+# Замените функцию call() на эту:
+def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = None) -> Any:
+    if data is None: data = {}
+    status_path = Path.home() / ".mvp" / "status"
+    if not status_path.exists(): raise RuntimeError("❌ Status file not found.")
+
+    with open(status_path, "r") as f:
+        status = json.load(f)
+
+    match = next((s for s in status if s.get("id") == target or s.get("name") == target), None)
+    if not match: raise ValueError(f"❌ No instance found with ID or name '{target}'")
+
+    port = match.get("port")
+    if not port: raise RuntimeError(f"❌ No port found for instance '{target}'")
+
+    url = f"http://127.0.0.1:{port}/{endpoint}"
+
+    try:
+        resp = requests.post(url, json=data)
+        
+        # Перехват заголовка Mock Tier
+        if resp.headers.get("X-MVP-Mock-Fallback") == "true":
+            err_msg = resp.headers.get("X-MVP-Original-Error", "Unknown")
+            print(f"⚠️  [MOCK TIER ACTIVE] Fallback triggered! Backend issue: {err_msg}", file=sys.stderr)
+
+        resp.raise_for_status()
+        try: return resp.json()
+        except json.JSONDecodeError: return resp.text
+    except Exception as e:
+        raise RuntimeError(f"❌ Request failed: {e}")
+
+# Обновите функцию rm и добавьте функцию purge:
+def purge(instance: str):
+    """Полностью убивает процесс Шлюза и стирает статус (Старая логика rm)"""
+    status_path = Path.home() / ".mvp" / "status"
+    if not status_path.exists(): raise RuntimeError("status file not found")
+    try:
+        with open(status_path, "r") as f: status = json.load(f)
+    except: raise RuntimeError(f"Failed to load status file")
+
+    target_entry = next((e for e in status if e.get("id") == instance), None)
+    if not target_entry: raise RuntimeError(f"Instance {instance} not found")
+
+    try:
+        ps_out = subprocess.check_output(["ps", "aux"], text=True)
+        for line in ps_out.splitlines():
+            if instance in line and "mvp.autorouter" in line:
+                pid = int(line.split()[1])
+                os.kill(pid, signal.SIGTERM)
+                break
+    except Exception as e:
+        print(f"DEBUG ERROR in process cleanup: {e}")
+
+    status = [entry for entry in status if entry.get("id") != instance]
+    with open(status_path, "w") as f: json.dump(status, f, indent=2)
+
+def rm(instance: str):
+    """Отключает Воркер, оставляя работать Шлюз в режиме Mock"""
+    try:
+        call(instance, "_sys/rm")
+    except Exception as e:
+        raise RuntimeError(f"Failed to switch {instance} to Mock Tier: {e}")
+
+# Замените команды CLI внизу файла:
+@app.command(name="rm")
+def cli_rm(instance: str):
+    """Stop the actual code worker (Mock Tier takes over)."""
+    try:
+        rm(instance)
+        typer.echo(f"Worker for {instance} stopped. Mock Tier is now active.")
+    except Exception as e:
+        typer.echo(f"❌ Error: {e}")
+        raise typer.Exit(1)
+
+@app.command(name="purge")
+def cli_purge(instance: str):
+    """Kill the component entirely (stops Gateway & removes from registry)."""
+    try:
+        purge(instance)
+        typer.echo(f"Instance {instance} completely removed from MVP registry.")
+    except Exception as e:
+        typer.echo(f"❌ Error: {e}")
+        raise typer.Exit(1)
+
+@app.command(name="update")
+def cli_update(instance: str):
+    """Git pull and restart the component worker (Mock Tier active during reload)."""
+    try:
+        call(instance, "_sys/update")
+        typer.echo(f"Instance {instance} successfully updated and restarted.")
+    except Exception as e:
+        typer.echo(f"❌ Error: {e}")
+        raise typer.Exit(1)
+
+# В функции unregister не забудьте заменить вызов rm на purge:
 def unregister(manager_id: str, instance_id: str) -> Any:
     """
     Убирает компонент из реестра конкретного менеджера,
@@ -209,8 +233,9 @@ def unregister(manager_id: str, instance_id: str) -> Any:
 
     # 3. Останавливаем процесс и удаляем запись
     rm(instance_id)
-
+    purge(instance_id)
     return unreg_res or f"Instance {instance_id} unregistered and removed"
+
 
 
 # ==========================================
@@ -223,16 +248,6 @@ def cli_add(component: str):
     res = add(component)
     typer.echo(f"✅ Component deployed successfully. Target identifier: {res}")
 
-
-@app.command(name="rm")
-def cli_rm(instance: str):
-    """Stop a component and delete it from the registry."""
-    try:
-        rm(instance)
-        typer.echo(f"instance {instance} stopped and removed from MVP registry")
-    except Exception as e:
-        typer.echo(f"❌ Error: {e}")
-        raise typer.Exit(1)
 
 
 @app.command(name="ls")
@@ -324,22 +339,6 @@ def cli_register(
         typer.echo(f"❌ Error: {e}")
         raise typer.Exit(1)
 
-
-@app.command(name="unregister")
-def cli_unregister(
-    manager_id: str = typer.Argument(..., help="Instance ID of the target Manager"),
-    instance_id: str = typer.Argument(..., help="Instance ID of the component to unregister and remove")
-):
-    """Unregister a component contract from manager and remove instance."""
-    try:
-        res = unregister(manager_id, instance_id)
-        if isinstance(res, (dict, list)):
-            typer.echo(json.dumps(res, indent=2, ensure_ascii=False))
-        else:
-            typer.echo(str(res))
-    except Exception as e:
-        typer.echo(f"❌ Error: {e}")
-        raise typer.Exit(1)
 
 
 @app.command()
