@@ -17,7 +17,8 @@ dependencies = [
     "uvicorn",
     "rich",
     "pydantic",
-    "httpx"
+    "httpx",
+    "polyfactory"
 ]
 
 [project.scripts]

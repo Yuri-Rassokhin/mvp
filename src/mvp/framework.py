@@ -90,6 +90,9 @@ def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = No
 
     try:
         resp = requests.post(url, json=data)
+        if resp.headers.get("X-MVP-Mock-Fallback") == "true":
+            err_msg = resp.headers.get("X-MVP-Original-Error", "Timeout/Error")
+            print(f"⚠️  [MOCK TIER ACTIVE] Fallback triggered! Original failure: {err_msg}", file=sys.stderr)
         resp.raise_for_status()
         try:
             return resp.json()
