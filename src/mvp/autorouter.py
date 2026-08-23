@@ -23,6 +23,10 @@ from .gossip import GossipMesh, GossipPayload, MESH_PROTOCOL_VERSION
 
 
 
+### SETTINGS ###
+MOCK_DEFAULT_TIMEOUT = 0.0 # How many seconds mock tier should wait for its oritinal to return value before overtaking it, 0 means no timeout
+
+
 console = Console(force_terminal=True, width=10000)
 
 # --- ПАРСИНГ АРГУМЕНТОВ ---
@@ -133,7 +137,7 @@ else:
 
     def make_proxy(ep_name, cfg):
         mock_cfg = cfg.get("mock")
-        raw_timeout = mock_cfg.get("timeout", 15.0) if mock_cfg else 15.0
+        raw_timeout = mock_cfg.get("timeout", MOCK_DEFAULT_TIMEOUT) if mock_cfg else MOCK_DEFAULT_TIMEOUT
         httpx_timeout = None if raw_timeout == 0 else float(raw_timeout)
         
         async def route_proxy(request: Request, response: Response):
