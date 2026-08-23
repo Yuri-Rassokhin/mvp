@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import Response, Request, HTTPException
-
+from rich.console import Console
 import os
 import inspect
 from fastapi import FastAPI
@@ -20,6 +20,10 @@ import httpx
 from .endpoints import scan_and_import_endpoints
 from .mesh import find_free_port, update_component_status, get_component_status
 from .gossip import GossipMesh, GossipPayload, MESH_PROTOCOL_VERSION
+
+
+
+console = Console(force_terminal=True, width=10000)
 
 # --- ПАРСИНГ АРГУМЕНТОВ ---
 parser = argparse.ArgumentParser(allow_abbrev=False)
@@ -134,13 +138,13 @@ else:
         
         async def route_proxy(request: Request, response: Response):
             async def fallback(err_msg):
-                print(f"⚠️  [MOCK TIER] /{ep_name} fallback triggered: {err_msg}")
+                console.print(f"[yellow]WARN: [MOCK TIER] /{ep_name} fallback triggered: {err_msg}[/yellow]")
                 response.headers["X-MVP-Mock-Fallback"] = "true"
                 response.headers["X-MVP-Original-Error"] = str(err_msg)
                 return resolve_mock(ep_name, mock_cfg) if mock_cfg else {"error": err_msg}
 
             if not worker_active or not worker_port:
-                return await fallback("Worker is manually stopped or updating")
+                return await fallback("component is manually stopped or updating")
 
             body = await request.body()
             headers = {k: v for k, v in request.headers.items() if k.lower() not in ["host", "content-length"]}

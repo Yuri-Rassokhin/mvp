@@ -129,7 +129,11 @@ def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = No
         # Перехват заголовка Mock Tier
         if resp.headers.get("X-MVP-Mock-Fallback") == "true":
             err_msg = resp.headers.get("X-MVP-Original-Error", "Unknown")
-            print(f"⚠️  [MOCK TIER ACTIVE] Fallback triggered! Backend issue: {err_msg}", file=sys.stderr)
+            typer.secho(
+                f"WARNING: Mock tier is responding on endpoint {url}. Status of the original endpoint: {err_msg}",
+                fg=typer.colors.YELLOW, 
+                err=True
+            )
 
         resp.raise_for_status()
         try: return resp.json()
