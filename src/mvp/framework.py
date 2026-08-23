@@ -242,6 +242,49 @@ def unregister(manager_id: str, instance_id: str) -> Any:
 
 
 
+def syslog(target: str, follow: bool = False) -> str:
+    """
+    Программный API для получения системного лога компонента через Шлюз.
+    Если follow=True, функция будет непрерывно печатать новые строки в stdout.
+    Если follow=False, вернет весь лог целиком в виде строки.
+    """
+    if not follow:
+        # Переиспользуем нашу готовую функцию call,
+        # она умеет возвращать raw text (resp.text), если ответ не JSON
+        return call(target, "syslog")
+    else:
+        # Для стриминга (follow=True) используем requests с параметром stream
+        status_path = Path.home() / ".mvp" / "status"
+        if not status_path.exists():
+            raise RuntimeError("❌ Status file not found.")
+
+        with open(status_path, "r") as f:
+            status = json.load(f)
+
+        match = next((s for s in status if s.get("id") == target or s.get("name") == target), None)
+        if not match:
+            raise ValueError(f"❌ No instance found with ID or name '{target}'")
+
+        port = match.get("port")
+        url = f"http://127.0.0.1:{port}/syslog-stream"
+
+        try:
+            # Открываем поток и читаем его по строкам
+            with requests.post(url, stream=True) as resp:
+                resp.raise_for_status()
+                for line in resp.iter_lines():
+                    if line:
+                        print(line.decode('utf-8'))
+        except KeyboardInterrupt:
+            # Корректно обрабатываем Ctrl+C (прерывание стриминга юзером)
+            pass
+        except Exception as e:
+            raise RuntimeError(f"❌ Log streaming failed: {e}")
+
+        return ""
+
+
+
 # ==========================================
 # TYPER CLI INTERFACE (Для терминала)
 # ==========================================
@@ -388,6 +431,27 @@ def switch(component: str, tier: str = typer.Argument(..., help="Target tier: mo
 def ask(question: str):
     """Ask the AI assistant about available components or their functionality."""
     typer.echo(f"🤖 Asking AI: {question}")
+
+@app.command(name="syslog")
+def cli_syslog(
+    target: str, 
+    follow: bool = typer.Option(False, "--follow", "-f", help="Stream logs continuously")
+):
+    """
+    Fetch logs from the component's syslog endpoint via API.
+    """
+    try:
+        if follow:
+            syslog(target, follow=True)
+        else:
+            logs = syslog(target, follow=False)
+            # Выводим через обычный print, чтобы сохранить 
+            # оригинальные переносы строк и форматирование лога
+            print(logs, end="")
+    except Exception as e:
+        typer.secho(f"❌ Error: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
 
 
 if __name__ == "__main__":
