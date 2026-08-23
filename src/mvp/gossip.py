@@ -7,9 +7,8 @@ from pydantic import BaseModel
 
 ### SETTINGS ###
 REAPER_PATIENCE = 30.0 # How long the Reaper will wait before killing inactive nodes
-
-
 MESH_PROTOCOL_VERSION = "1.0"
+PORT_RANGE = (8500, 8600)
 
 class InstanceState(BaseModel):
     base_url: str

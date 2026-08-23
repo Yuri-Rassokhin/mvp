@@ -14,27 +14,6 @@ def find_free_port(start=8500, end=8999):
                 continue
     raise RuntimeError("no free port found in the range")
 
-def get_component_status(component: Optional[str] = None) -> List[Dict]:
-    status_path = Path.home() / ".mvp" / "status"
-    if not status_path.exists():
-        return []
-
-    try:
-        with open(status_path, "r") as f:
-            raw = f.read().strip()
-            if not raw:
-                return []
-
-            components = json.loads(raw)
-            if not isinstance(components, list):
-                raise ValueError("status file must contain a list")
-    except Exception as e:
-        raise RuntimeError(f"Failed to load status file: {e}")
-
-    if component:
-        return [entry for entry in components if entry.get("id") == component]
-
-    return components
 
 def type_name(annotation: Any) -> str:
     try:

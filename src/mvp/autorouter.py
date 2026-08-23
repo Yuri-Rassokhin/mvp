@@ -18,7 +18,7 @@ import uvicorn
 import httpx
 
 from .endpoints import scan_and_import_endpoints
-from .mesh import find_free_port, update_component_status, get_component_status
+from .mesh import find_free_port, update_component_status
 from .gossip import GossipMesh, GossipPayload, MESH_PROTOCOL_VERSION
 
 

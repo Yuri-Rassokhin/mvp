@@ -8,6 +8,15 @@ from typing import List, Optional, Any, Union
 from pathlib import Path
 import requests
 import typer
+import httpx
+import asyncio
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.text import Text
+from rich.console import Group
+
+
 
 from .file_tree import (
     wait_for_instance_in_status,
@@ -15,7 +24,10 @@ from .file_tree import (
     prepare_component_tree,
     launch_component_instance
 )
-from .mesh import get_component_status
+
+from .gossip import MESH_PROTOCOL_VERSION
+
+
 
 app = typer.Typer(help="MVP CLI tool to manage lifecycle of a component mesh")
 
@@ -62,12 +74,6 @@ def add(component: str) -> str:
 
 
 
-def ls(component: Optional[str] = None):
-    """Возвращает список статусов компонентов."""
-    return get_component_status(component)
-
-
-
 def contract(target: str) -> Any:
     """Запрашивает контракт напрямую у запущенного компонента по его ID/имени."""
     return call(target, "contract", {})
@@ -106,7 +112,6 @@ def register(manager_id: str, component_path: str) -> str:
 
 
 
-# Замените функцию call() на эту:
 def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = None) -> Any:
     if data is None: data = {}
     status_path = Path.home() / ".mvp" / "status"
@@ -141,7 +146,8 @@ def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = No
     except Exception as e:
         raise RuntimeError(f"❌ Request failed: {e}")
 
-# Обновите функцию rm и добавьте функцию purge:
+
+
 def purge(instance: str):
     """Полностью убивает процесс Шлюза и стирает статус (Старая логика rm)"""
     status_path = Path.home() / ".mvp" / "status"
@@ -166,6 +172,8 @@ def purge(instance: str):
     status = [entry for entry in status if entry.get("id") != instance]
     with open(status_path, "w") as f: json.dump(status, f, indent=2)
 
+
+
 def rm(instance: str):
     """Отключает Воркер, оставляя работать Шлюз в режиме Mock"""
     try:
@@ -173,7 +181,8 @@ def rm(instance: str):
     except Exception as e:
         raise RuntimeError(f"Failed to switch {instance} to Mock Tier: {e}")
 
-# Замените команды CLI внизу файла:
+
+
 @app.command(name="rm")
 def cli_rm(instance: str):
     """Stop the actual code worker (Mock Tier takes over)."""
@@ -183,6 +192,8 @@ def cli_rm(instance: str):
     except Exception as e:
         typer.echo(f"❌ Error: {e}")
         raise typer.Exit(1)
+
+
 
 @app.command(name="purge")
 def cli_purge(instance: str):
@@ -194,6 +205,8 @@ def cli_purge(instance: str):
         typer.echo(f"❌ Error: {e}")
         raise typer.Exit(1)
 
+
+
 @app.command(name="update")
 def cli_update(instance: str):
     """Git pull and restart the component worker (Mock Tier active during reload)."""
@@ -204,7 +217,8 @@ def cli_update(instance: str):
         typer.echo(f"❌ Error: {e}")
         raise typer.Exit(1)
 
-# В функции unregister не забудьте заменить вызов rm на purge:
+
+
 def unregister(manager_id: str, instance_id: str) -> Any:
     """
     Убирает компонент из реестра конкретного менеджера,
@@ -282,6 +296,139 @@ def syslog(target: str, follow: bool = False) -> str:
             raise RuntimeError(f"❌ Log streaming failed: {e}")
 
         return ""
+
+
+
+import httpx
+import asyncio
+from typing import Optional
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.text import Text
+
+
+
+MESH_PROTOCOL_VERSION = "1.0"
+PORT_RANGE = (8500, 8550)
+
+console = Console()
+
+
+
+async def fetch_global_contract():
+    headers = {"X-Mesh-Version": MESH_PROTOCOL_VERSION}
+
+    async with httpx.AsyncClient(timeout=0.5) as client:
+        for port in range(PORT_RANGE[0], PORT_RANGE[1]):
+            try:
+                probe = await client.post(
+                    f"http://127.0.0.1:{port}/_gossip",
+                    headers=headers,
+                    json={"sender_id": "cli", "registry": {}}
+                )
+                if probe.status_code == 200:
+                    # Узел жив, забираем контракт
+                    openapi_resp = await client.get(
+                        f"http://127.0.0.1:{port}/openapi",
+                        headers=headers,
+                        timeout=2.0
+                    )
+                    if openapi_resp.status_code == 200:
+                        return port, openapi_resp.json()
+            except Exception:
+                continue
+    return None, None
+
+def resolve_schema_type(schema_ref: dict, components: dict) -> str:
+    """Извлекает и форматирует структуру из Pydantic/OpenAPI схем"""
+    if not schema_ref:
+        return "None"
+
+    if "$ref" in schema_ref:
+        schema_name = schema_ref["$ref"].split("/")[-1]
+        schema = components.get("schemas", {}).get(schema_name, {})
+        props = schema.get("properties", {})
+
+        sig_parts = []
+        for prop_name, prop_details in props.items():
+            prop_type = prop_details.get("type", "Any")
+            if prop_type == "array":
+                prop_type = "List"
+            sig_parts.append(f'"{prop_name}": {prop_type}')
+
+        return f"{{ {', '.join(sig_parts)} }}"
+
+    return str(schema_ref.get("type", "Unknown"))
+
+async def async_ls(component_filter: Optional[str] = None):
+    with console.status("[bold green]Scanning Gossip Mesh for active modules...", spinner="dots"):
+        port, contract = await fetch_global_contract()
+
+    if not contract:
+        console.print("[bold red]❌ No active MVP modules found in the network.[/bold red]")
+        return
+
+    console.print(f"[dim]Connected to MVP Framework at port {port}[/dim]\n")
+
+    modules = contract.get("modules", [])
+    components = contract.get("components", {})
+
+    for module in modules:
+        title = module.get("title", "Unknown Module")
+        instance_id = module.get("instance_id", "unknown")
+        
+        if component_filter and component_filter.lower() not in title.lower() and component_filter != instance_id:
+            continue
+
+        subtitle = module.get("subtitle", "")
+        base_url = module.get("base_url", "")
+        
+        # 1. Собираем метаданные в текст панели
+        header = Text()
+        header.append("Component   ", style="dim")
+        header.append(f"{title}\n", style="bold cyan")
+        header.append("Instance    ", style="dim")
+        header.append(f"{instance_id}\n", style="yellow")
+        header.append("Subtitle    ", style="dim")
+        header.append(f"{subtitle}\n", style="italic")
+        header.append("─" * 50 + "\n", style="dim") # Разделитель внутри рамки
+
+        # 2. Собираем эндпоинты в виде строк текста
+        endpoints_text = Text()
+        endpoints = module.get("endpoints", {})
+        
+        for path, methods in endpoints.items():
+            for method, details in methods.items():
+                full_url = f"{base_url}{path}"
+                
+                req_schema = details.get("requestBody", {}).get("content", {}).get("application/json", {}).get("schema", {})
+                req_sig = resolve_schema_type(req_schema, components)
+                
+                resp_schema = details.get("responses", {}).get("200", {}).get("content", {}).get("application/json", {}).get("schema", {})
+                resp_type = resolve_schema_type(resp_schema, components)
+                
+                if path in ["/contract", "/syslog", "/syslog-stream"]:
+                    endpoints_text.append(f"  GET {full_url}\n", style="dim")
+                else:
+                    # Формируем цветную строку эндпоинта
+                    endpoints_text.append(f"  {method.upper()} ", style="bold green")
+                    endpoints_text.append(f"{full_url} ")
+                    endpoints_text.append(f"{req_sig} ", style="yellow")
+                    endpoints_text.append(f"-> {resp_type}\n", style="blue")
+
+        # 3. Объединяем шапку и эндпоинты в единую группу внутри одной панели
+        panel_content = Group(header, endpoints_text)
+        
+        console.print(Panel(panel_content, expand=False, border_style="blue"))
+        console.print() # Пустая строка между панелями модулей
+
+
+@app.command(name="ls")
+def ls(component: Optional[str] = None):
+    """Lists all active modules dynamically from the Gossip network."""
+    # Typer/Click работает синхронно, поэтому мы запускаем асинхронную логику через asyncio.run()
+    asyncio.run(async_ls(component_filter=component))
 
 
 
