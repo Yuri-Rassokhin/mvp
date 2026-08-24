@@ -15,6 +15,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
 from rich.console import Group
+from rich.rule import Rule
 
 
 
@@ -188,7 +189,7 @@ def cli_rm(instance: str):
     """Stop the actual code worker (Mock Tier takes over)."""
     try:
         rm(instance)
-        typer.echo(f"Worker for {instance} stopped. Mock Tier is now active.")
+        typer.echo(f"Instance {instance} REMOVED from MVP Framework")
     except Exception as e:
         typer.echo(f"❌ Error: {e}")
         raise typer.Exit(1)
@@ -200,7 +201,7 @@ def cli_purge(instance: str):
     """Kill the component entirely (stops Gateway & removes from registry)."""
     try:
         purge(instance)
-        typer.echo(f"Instance {instance} completely removed from MVP registry.")
+        typer.echo(f"Instance {instance} PURGED from MVP Framework")
     except Exception as e:
         typer.echo(f"❌ Error: {e}")
         raise typer.Exit(1)
@@ -366,7 +367,7 @@ async def async_ls(component_filter: Optional[str] = None):
         port, contract = await fetch_global_contract()
 
     if not contract:
-        console.print("[bold red]❌ No active MVP modules found in the network.[/bold red]")
+        console.print("[yellow]MVP Framework is empty[/yellow]")
         return
 
     console.print(f"[dim]Connected to MVP Framework at port {port}[/dim]\n")
@@ -392,7 +393,6 @@ async def async_ls(component_filter: Optional[str] = None):
         header.append(f"{instance_id}\n", style="yellow")
         header.append("Subtitle    ", style="dim")
         header.append(f"{subtitle}\n", style="italic")
-        header.append("─" * 50 + "\n", style="dim") # Разделитель внутри рамки
 
         # 2. Собираем эндпоинты в виде строк текста
         endpoints_text = Text()
@@ -409,10 +409,10 @@ async def async_ls(component_filter: Optional[str] = None):
                 resp_type = resolve_schema_type(resp_schema, components)
                 
                 if path in ["/contract", "/syslog", "/syslog-stream"]:
-                    endpoints_text.append(f"  GET {full_url}\n", style="dim")
+                    endpoints_text.append(f"GET {full_url}\n", style="dim")
                 else:
                     # Формируем цветную строку эндпоинта
-                    endpoints_text.append(f"  {method.upper()} ", style="bold green")
+                    endpoints_text.append(f"{method.upper()} ", style="bold green")
                     endpoints_text.append(f"{full_url} ")
                     endpoints_text.append(f"{req_sig} ", style="yellow")
                     endpoints_text.append(f"-> {resp_type}\n", style="blue")
@@ -420,7 +420,7 @@ async def async_ls(component_filter: Optional[str] = None):
         # 3. Объединяем шапку и эндпоинты в единую группу внутри одной панели
         panel_content = Group(header, endpoints_text)
         
-        console.print(Panel(panel_content, expand=False, border_style="blue"))
+        console.print(Panel(panel_content, expand=True, border_style="blue"))
         console.print() # Пустая строка между панелями модулей
 
 
@@ -440,7 +440,7 @@ def ls(component: Optional[str] = None):
 def cli_add(component: str):
     """Deploy new instance of a component to its tier environment."""
     res = add(component)
-    typer.echo(f"✅ Component deployed successfully. Target identifier: {res}")
+    typer.echo(f" Component '{component}' deployed successfully, instance ID {res}")
 
 
 
@@ -450,9 +450,7 @@ def cli_ls(component: Optional[str] = None):
     filtered = ls(component)
     if not filtered:
         if component:
-            typer.echo(f"no instances found for component: {component}")
-        else:
-            typer.echo("MVP registry is empty")
+            typer.echo(f"No instances found for component: {component}")
         raise typer.Exit()
 
     for entry in filtered:
