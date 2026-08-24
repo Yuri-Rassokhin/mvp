@@ -18,7 +18,7 @@ import uvicorn
 import httpx
 
 from .endpoints import scan_and_import_endpoints
-from .mesh import find_free_port, update_component_status
+from .mesh import find_free_port, update_component_status, get_bound_socket
 from .gossip import GossipMesh, GossipPayload, MESH_PROTOCOL_VERSION
 
 
@@ -35,6 +35,7 @@ parser.add_argument("manifest_path")
 parser.add_argument("instance_id")
 parser.add_argument("--worker", action="store_true")
 parser.add_argument("--worker-port", type=int)
+parser.add_argument("--worker-fd", type=int) # НОВЫЙ АРГУМЕНТ ДЛЯ ПРЯМОЙ ПЕРЕДАЧИ СОКЕТА
 parser.add_argument("--gateway-port", type=int)
 args, unknown = parser.parse_known_args()
 
@@ -78,13 +79,19 @@ if args.worker:
     modules = scan_and_import_endpoints(component_dir, endpoints_config, start_funcs, app, component_root)
     
     if __name__ == "__main__":
-        uvicorn.run(app, host="127.0.0.1", port=args.worker_port)
+        # Если передан FD, Uvicorn запускается прямо на нем!
+        if args.worker_fd is not None:
+            uvicorn.run(app, fd=args.worker_fd)
+        else:
+            uvicorn.run(app, host="127.0.0.1", port=args.worker_port)
 
 else:
     # =========================================================================
     # РЕЖИМ GATEWAY: Держит публичный порт, проксирует трафик, отдает Mock
     # =========================================================================
-    port = find_free_port()
+    
+    # 1. ЗАХВАТЫВАЕМ ПОРТ GATEWAY НАМЕРТВО
+    gateway_sock, port = get_bound_socket(host="0.0.0.0")
     base_url = f"http://127.0.0.1:{port}"
     mesh = GossipMesh(instance_id=instance_id, base_url=base_url)
     
@@ -93,16 +100,24 @@ else:
     worker_active = False
     schema_cache = {}
     
-    # Глобальный клиент, чтобы не истощать сокеты при проксировании!
     proxy_client = httpx.AsyncClient()
     
     def spawn_worker():
         global worker_process, worker_port, worker_active
-        # Ищем порт СТРОГО начиная со следующего, чтобы не перехватить порт Шлюза
-        worker_port = find_free_port(start=port + 1)
+        
+        # 2. ЗАХВАТЫВАЕМ ПОРТ WORKER НАМЕРТВО (локально)
+        worker_sock, worker_port = get_bound_socket(host="127.0.0.1", start=port + 1)
+        worker_fd = worker_sock.fileno()
+        worker_sock.set_inheritable(True) # Разрешаем передать сокет дочернему процессу
+        
         cmd = [sys.executable, "-u", "-m", "mvp.autorouter", str(manifest_path), instance_id, 
-               "--worker", "--worker-port", str(worker_port), "--gateway-port", str(port)]
-        worker_process = subprocess.Popen(cmd, stdout=sys.stdout, stderr=sys.stderr)
+               "--worker", "--worker-port", str(worker_port), "--worker-fd", str(worker_fd), "--gateway-port", str(port)]
+               
+        # Передаем дескриптор в Popen (pass_fds)
+        worker_process = subprocess.Popen(cmd, pass_fds=(worker_fd,), stdout=sys.stdout, stderr=sys.stderr)
+        
+        # ОБЯЗАТЕЛЬНО закрываем сокет в родителе! Теперь им владеет Worker.
+        worker_sock.close() 
         worker_active = True
 
     @asynccontextmanager
@@ -258,7 +273,8 @@ else:
         return global_schema
 
     if __name__ == "__main__":
-        config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
+        # 3. ПЕРЕДАЕМ СОКЕТ НАПРЯМУЮ В UVICORN
+        config = uvicorn.Config(app, loop="asyncio") # Без host и port
         server = uvicorn.Server(config)
-        asyncio.run(server.serve())
+        asyncio.run(server.serve(sockets=[gateway_sock]))
 
