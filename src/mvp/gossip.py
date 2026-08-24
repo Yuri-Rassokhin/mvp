@@ -15,6 +15,7 @@ class InstanceState(BaseModel):
     contract: Dict[str, Any]
     heartbeat: int
     local_updated_at: float
+    status: str = "active"
 
 class GossipPayload(BaseModel):
     sender_id: str
@@ -29,6 +30,34 @@ class GossipMesh:
         self.tombstones: Dict[str, float] = {}
         self.http_client = httpx.AsyncClient(timeout=2.0)
         self.started_at = time.time()
+
+    async def leave_network(self):
+        """Паттерн Tombstone: оповещаем сеть о своем закрытии"""
+        if self.instance_id not in self.registry:
+            return
+            
+        # Инкрементируем пульс, чтобы соседи точно приняли обновление, и ставим статус мертвеца
+        self.registry[self.instance_id].heartbeat += 1
+        self.registry[self.instance_id].status = "dead"
+        
+        payload_json = GossipPayload(
+            sender_id=self.instance_id, registry=self.registry
+        ).model_dump_json()
+
+        headers = {
+            "X-Mesh-Version": MESH_PROTOCOL_VERSION, 
+            "Content-Type": "application/json"
+        }
+        
+        # Рассылаем прощальное письмо всем известным узлам параллельно
+        async with httpx.AsyncClient() as client:
+            peers = [state.base_url for i_id, state in self.registry.items() if i_id != self.instance_id]
+            tasks = [
+                client.post(f"{url}/_gossip", content=payload_json, headers=headers, timeout=0.5)
+                for url in peers
+            ]
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     def _update_self_state(self, local_contract: Dict[str, Any]):
         if self.instance_id not in self.registry:

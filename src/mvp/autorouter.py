@@ -125,9 +125,15 @@ else:
         spawn_worker()
         asyncio.create_task(mesh.gossip_loop(get_local_contract_func=build_local_contract))
         asyncio.create_task(mesh.reaper_loop())
+
         yield
+
         if worker_process:
             worker_process.terminate()
+
+        # remove the module's contract from the unified contract distributed in the mesh
+        await mesh.leave_network()
+
         await proxy_client.aclose()
         print(f"[{instance_id}] Shutting down Gateway...")
 
@@ -261,6 +267,11 @@ else:
     def get_global_openapi():
         global_schema = {"title": "MVP Framework Manager", "modules": [], "components": {"schemas": {}}}
         for instance_id, state in mesh.registry.items():
+
+            # skip dead modules - the ones that already left the mesh and marked dead, but not yet reaped by Reaper
+            if getattr(state, "status", "active") == "dead":
+                continue
+
             info = state.contract.get("info", {})
             module_entry = {
                 "instance_id": instance_id, "title": info.get("title", "Unknown Module"),
