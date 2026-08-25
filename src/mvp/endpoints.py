@@ -151,8 +151,9 @@ def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_
                 sig = inspect.signature(func)
                 fields = {}
                 for param_name, param in sig.parameters.items():
-                    ann = param.annotation if param.annotation != inspect._empty else str
-                    fields[param_name] = (ann, ...)
+                    ann = param.annotation if param.annotation != inspect._empty else Any
+                    default_val = param.default if param.default != inspect._empty else ...
+                    fields[param_name] = (ann, default_val)
                 Model = create_model(f"{name.title()}Input", **fields)
 
                 return_annotation = sig.return_annotation
@@ -161,9 +162,12 @@ def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_
                 def make_endpoint(target_func):
                     async def endpoint_handler(data: Model):
                         # Логика выполняется без таймаутов, Gateway сам оборвет ожидание
+                        payload_dict = data.model_dump() if hasattr(data, 'model_dump') else data.dict()
+
                         if inspect.iscoroutinefunction(target_func):
-                            return await target_func(**data.dict())
-                        return await run_in_threadpool(target_func, **data.dict())
+                            return await target_func(**payload_dict)
+                        return await run_in_threadpool(target_func, **payload_dict)
+
                     return endpoint_handler
 
                 ep_config = endpoints_config.get(name, {})
