@@ -144,8 +144,20 @@ def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = No
         resp.raise_for_status()
         try: return resp.json()
         except json.JSONDecodeError: return resp.text
+    except requests.HTTPError as e:
+        response = e.response
+        detail = ""
+        if response is not None:
+            try:
+                payload = response.json()
+                body = payload.get("detail", payload) if isinstance(payload, dict) else payload
+                detail = json.dumps(body, ensure_ascii=False) if not isinstance(body, str) else body
+            except ValueError:
+                detail = response.text
+        suffix = f"\nResponse: {detail[:4096]}" if detail else ""
+        raise RuntimeError(f"❌ Request failed: {e}{suffix}") from e
     except Exception as e:
-        raise RuntimeError(f"❌ Request failed: {e}")
+        raise RuntimeError(f"❌ Request failed: {e}") from e
 
 
 
@@ -362,6 +374,8 @@ def resolve_schema_type(schema_ref: dict, components: dict) -> str:
 
     return str(schema_ref.get("type", "Unknown"))
 
+
+
 async def async_ls(component_filter: Optional[str] = None):
     with console.status("[bold green]Scanning Gossip Mesh for active modules...", spinner="dots"):
         port, contract = await fetch_global_contract()
@@ -378,50 +392,57 @@ async def async_ls(component_filter: Optional[str] = None):
     for module in modules:
         title = module.get("title", "Unknown Module")
         instance_id = module.get("instance_id", "unknown")
-        
+
         if component_filter and component_filter.lower() not in title.lower() and component_filter != instance_id:
             continue
 
         subtitle = module.get("subtitle", "")
         base_url = module.get("base_url", "")
-        
+
         # 1. Собираем метаданные в текст панели
         header = Text()
-        header.append("Component   ", style="dim")
+        header.append("Component    ", style="dim")
         header.append(f"{title}\n", style="bold cyan")
-        header.append("Instance    ", style="dim")
+        header.append("Instance     ", style="dim")
         header.append(f"{instance_id}\n", style="yellow")
-        header.append("Subtitle    ", style="dim")
+        header.append("Subtitle     ", style="dim")
         header.append(f"{subtitle}\n", style="italic")
 
         # 2. Собираем эндпоинты в виде строк текста
         endpoints_text = Text()
         endpoints = module.get("endpoints", {})
-        
+
         for path, methods in endpoints.items():
             for method, details in methods.items():
                 full_url = f"{base_url}{path}"
-                
+
                 req_schema = details.get("requestBody", {}).get("content", {}).get("application/json", {}).get("schema", {})
                 req_sig = resolve_schema_type(req_schema, components)
-                
+
                 resp_schema = details.get("responses", {}).get("200", {}).get("content", {}).get("application/json", {}).get("schema", {})
                 resp_type = resolve_schema_type(resp_schema, components)
-                
+
                 if path in ["/contract", "/syslog", "/syslog-stream"]:
                     endpoints_text.append(f"GET {full_url}\n", style="dim")
                 else:
+                    # Извлекаем описание эндпоинта (если x-visual-comment пуст, пробуем взять summary)
+                    comment = details.get("x-visual-comment") or details.get("summary")
+                    if comment:
+                        # Добавляем комментарий перед эндпоинтом
+                        endpoints_text.append(f"# {comment}\n", style="dim italic")
+
                     # Формируем цветную строку эндпоинта
                     endpoints_text.append(f"{method.upper()} ", style="bold green")
                     endpoints_text.append(f"{full_url} ")
                     endpoints_text.append(f"{req_sig} ", style="yellow")
-                    endpoints_text.append(f"-> {resp_type}\n", style="blue")
+                    endpoints_text.append(f"-> {resp_type}\n\n", style="blue") # Добавил лишний \n для визуального воздуха между методами
 
         # 3. Объединяем шапку и эндпоинты в единую группу внутри одной панели
         panel_content = Group(header, endpoints_text)
-        
+
         console.print(Panel(panel_content, expand=True, border_style="blue"))
         console.print() # Пустая строка между панелями модулей
+
 
 
 @app.command(name="ls")
