@@ -199,8 +199,9 @@ else:
         if "info" not in schema: schema["info"] = {}
         schema["info"]["title"] = component_title
         schema["info"]["description"] = component_subtitle
+        schema["info"]["x-contract-path"] = str(manifest_path)
         schema["info"].pop("version", None)
-        
+
         filtered_paths = {}
         for path, path_item in schema.get("paths", {}).items():
             if path.lstrip("/") in public_funcs:
@@ -246,8 +247,11 @@ else:
 
             info = state.contract.get("info", {})
             module_entry = {
-                "instance_id": instance_id, "title": info.get("title", "Unknown Module"),
-                "subtitle": info.get("description", ""), "base_url": state.base_url,
+                "instance_id": instance_id, 
+                "title": info.get("title", "Unknown Module"),
+                "subtitle": info.get("description", ""), 
+                "contract_path": info.get("x-contract-path", ""),
+                "base_url": state.base_url,
                 "endpoints": state.contract.get("paths", {})
             }
             global_schema["modules"].append(module_entry)

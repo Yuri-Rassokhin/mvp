@@ -319,14 +319,21 @@ async def async_ls(component_filter: Optional[str] = None):
 
         subtitle = module.get("subtitle", "")
         base_url = module.get("base_url", "")
+        manifest_path = module.get("manifest_path", "")
 
         header = Text()
         header.append("Component    ", style="dim")
         header.append(f"{title}\n", style="bold cyan")
         header.append("Instance     ", style="dim")
         header.append(f"{instance_id}\n", style="yellow")
-        header.append("Subtitle     ", style="dim")
-        header.append(f"{subtitle}\n", style="italic")
+        
+        if manifest_path:
+            header.append("Contract     ", style="dim")
+            header.append(f"{manifest_path}\n", style="green")
+            
+        if subtitle:
+            header.append("Subtitle     ", style="dim")
+            header.append(f"{subtitle}\n", style="italic")
 
         endpoints_text = Text()
         endpoints = module.get("endpoints", {})
