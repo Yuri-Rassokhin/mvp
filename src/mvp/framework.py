@@ -158,6 +158,16 @@ def unregister(manager_id: str, instance_id: str) -> Any:
     return unreg_res or f"Instance {instance_id} unregistered and removed"
 
 
+def switch(instance: str, tier: str) -> Any:
+    """
+    Программный API для переключения активного тира компонента.
+    tier должен быть одним из: "mock", "prod", "dev".
+    """
+    if tier not in {"mock", "prod", "dev"}:
+        raise ValueError("Tier must be one of: mock, prod, dev")
+    return call(instance, "_sys/switch", {"tier": tier})
+
+
 def syslog(target: str, follow: bool = False) -> str:
     if not follow:
         return call(target, "syslog")
