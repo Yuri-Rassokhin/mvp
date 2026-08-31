@@ -319,7 +319,7 @@ async def async_ls(component_filter: Optional[str] = None):
 
         subtitle = module.get("subtitle", "")
         base_url = module.get("base_url", "")
-        manifest_path = module.get("manifest_path", "")
+        manifest_path = module.get("contract_path", "")
 
         header = Text()
         header.append("Component    ", style="dim")
