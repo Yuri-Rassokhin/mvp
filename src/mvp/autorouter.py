@@ -18,24 +18,20 @@ import uvicorn
 import httpx
 
 from .endpoints import scan_and_import_endpoints
-from .mesh import find_free_port, update_component_status, get_bound_socket
+from .mesh import find_free_port, get_bound_socket
 from .gossip import GossipMesh, GossipPayload, MESH_PROTOCOL_VERSION
 
-
-
 ### SETTINGS ###
-MOCK_DEFAULT_TIMEOUT = 0.0 # How many seconds mock tier should wait for its oritinal to return value before overtaking it, 0 means no timeout
-
+MOCK_DEFAULT_TIMEOUT = 0.0
 
 console = Console(force_terminal=True, width=10000)
 
-# --- ПАРСИНГ АРГУМЕНТОВ ---
 parser = argparse.ArgumentParser(allow_abbrev=False)
 parser.add_argument("manifest_path")
 parser.add_argument("instance_id")
 parser.add_argument("--worker", action="store_true")
 parser.add_argument("--worker-port", type=int)
-parser.add_argument("--worker-fd", type=int) # НОВЫЙ АРГУМЕНТ ДЛЯ ПРЯМОЙ ПЕРЕДАЧИ СОКЕТА
+parser.add_argument("--worker-fd", type=int)
 parser.add_argument("--gateway-port", type=int)
 args, unknown = parser.parse_known_args()
 
@@ -55,18 +51,13 @@ start_funcs = manifest.get("start", [])
 
 raw_endpoints = manifest.get("endpoints", {})
 endpoints_config = {ep: {"visibility": "public"} for ep in raw_endpoints} if isinstance(raw_endpoints, list) else raw_endpoints
-allowed_funcs = set(endpoints_config.keys())
 public_funcs = {name for name, cfg in endpoints_config.items() if cfg.get("visibility", "public") == "public"}
 
-
 if args.worker:
-    # =========================================================================
-    # РЕЖИМ WORKER: Реализует бизнес-логику и отдает реальные ответы
-    # =========================================================================
     @asynccontextmanager
     async def worker_lifespan(app: FastAPI):
         async def _push_schema():
-            await asyncio.sleep(0.5) # Даем Шлюзу полсекунды на старт
+            await asyncio.sleep(0.5)
             try:
                 async with httpx.AsyncClient() as client:
                     await client.post(f"http://127.0.0.1:{args.gateway_port}/_sys/schema", json=app.openapi())
@@ -79,18 +70,12 @@ if args.worker:
     modules = scan_and_import_endpoints(component_dir, endpoints_config, start_funcs, app, component_root)
     
     if __name__ == "__main__":
-        # Если передан FD, Uvicorn запускается прямо на нем!
         if args.worker_fd is not None:
             uvicorn.run(app, fd=args.worker_fd)
         else:
             uvicorn.run(app, host="127.0.0.1", port=args.worker_port)
 
 else:
-    # =========================================================================
-    # РЕЖИМ GATEWAY: Держит публичный порт, проксирует трафик, отдает Mock
-    # =========================================================================
-    
-    # 1. ЗАХВАТЫВАЕМ ПОРТ GATEWAY НАМЕРТВО
     gateway_sock, port = get_bound_socket(host="0.0.0.0")
     base_url = f"http://127.0.0.1:{port}"
     mesh = GossipMesh(instance_id=instance_id, base_url=base_url)
@@ -99,24 +84,18 @@ else:
     worker_port = None
     worker_active = False
     schema_cache = {}
-    
     proxy_client = httpx.AsyncClient()
     
     def spawn_worker():
         global worker_process, worker_port, worker_active
-        
-        # 2. ЗАХВАТЫВАЕМ ПОРТ WORKER НАМЕРТВО (локально)
         worker_sock, worker_port = get_bound_socket(host="127.0.0.1", start=port + 1)
         worker_fd = worker_sock.fileno()
-        worker_sock.set_inheritable(True) # Разрешаем передать сокет дочернему процессу
+        worker_sock.set_inheritable(True)
         
         cmd = [sys.executable, "-u", "-m", "mvp.autorouter", str(manifest_path), instance_id, 
                "--worker", "--worker-port", str(worker_port), "--worker-fd", str(worker_fd), "--gateway-port", str(port)]
                
-        # Передаем дескриптор в Popen (pass_fds)
         worker_process = subprocess.Popen(cmd, pass_fds=(worker_fd,), stdout=sys.stdout, stderr=sys.stderr)
-        
-        # ОБЯЗАТЕЛЬНО закрываем сокет в родителе! Теперь им владеет Worker.
         worker_sock.close() 
         worker_active = True
 
@@ -125,22 +104,17 @@ else:
         spawn_worker()
         asyncio.create_task(mesh.gossip_loop(get_local_contract_func=build_local_contract))
         asyncio.create_task(mesh.reaper_loop())
-
         yield
-
         if worker_process:
             worker_process.terminate()
-
-        # remove the module's contract from the unified contract distributed in the mesh
         await mesh.leave_network()
-
         await proxy_client.aclose()
         print(f"[{instance_id}] Shutting down Gateway...")
 
     app = FastAPI(title=component_title, description=component_subtitle, lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-    update_component_status(component_title, component_subtitle, list(allowed_funcs), port, [], instance_id)
+    # Удален вызов update_component_status(...)
 
     def resolve_mock(ep_name, mock_cfg):
         if "value" in mock_cfg: return mock_cfg["value"]
@@ -267,8 +241,6 @@ else:
     def get_global_openapi():
         global_schema = {"title": "MVP Framework Manager", "modules": [], "components": {"schemas": {}}}
         for instance_id, state in mesh.registry.items():
-
-            # skip dead modules - the ones that already left the mesh and marked dead, but not yet reaped by Reaper
             if getattr(state, "status", "active") == "dead":
                 continue
 
@@ -284,8 +256,6 @@ else:
         return global_schema
 
     if __name__ == "__main__":
-        # 3. ПЕРЕДАЕМ СОКЕТ НАПРЯМУЮ В UVICORN
-        config = uvicorn.Config(app, loop="asyncio") # Без host и port
+        config = uvicorn.Config(app, loop="asyncio")
         server = uvicorn.Server(config)
         asyncio.run(server.serve(sockets=[gateway_sock]))
-
