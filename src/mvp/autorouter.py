@@ -33,6 +33,7 @@ parser.add_argument("--worker", action="store_true")
 parser.add_argument("--worker-port", type=int)
 parser.add_argument("--worker-fd", type=int)
 parser.add_argument("--gateway-port", type=int)
+parser.add_argument("--tier", type=str, default="prod") # Указание тира для воркера
 args, unknown = parser.parse_known_args()
 
 manifest_path = Path(args.manifest_path).resolve()
@@ -60,13 +61,14 @@ if args.worker:
             await asyncio.sleep(0.5)
             try:
                 async with httpx.AsyncClient() as client:
-                    await client.post(f"http://127.0.0.1:{args.gateway_port}/_sys/schema", json=app.openapi())
+                    # Воркер сообщает шлюзу свой тир при передаче схемы
+                    await client.post(f"http://127.0.0.1:{args.gateway_port}/_sys/schema?tier={args.tier}", json=app.openapi())
             except Exception as e:
                 print(f"WARN: Worker failed to push schema to gateway: {e}")
         asyncio.create_task(_push_schema())
         yield
 
-    app = FastAPI(title=component_title + " (Worker)", lifespan=worker_lifespan)
+    app = FastAPI(title=f"{component_title} ({args.tier.upper()})", lifespan=worker_lifespan)
     modules = scan_and_import_endpoints(component_dir, endpoints_config, start_funcs, app, component_root)
     
     if __name__ == "__main__":
@@ -80,41 +82,49 @@ else:
     base_url = f"http://127.0.0.1:{port}"
     mesh = GossipMesh(instance_id=instance_id, base_url=base_url)
     
-    worker_process = None
-    worker_port = None
-    worker_active = False
-    schema_cache = {}
+    # --- СОСТОЯНИЕ ШЛЮЗА ---
+    active_tier = "prod"
+    workers = {
+        "prod": {"process": None, "port": None, "active": False, "commit": "HEAD"},
+        "dev": {"process": None, "port": None, "active": False, "commit": "HEAD"}
+    }
+    schema_cache = {"prod": None, "dev": None}
     proxy_client = httpx.AsyncClient()
+    git_lock = asyncio.Lock()
     
-    def spawn_worker():
-        global worker_process, worker_port, worker_active
+    def spawn_worker(tier="prod"):
+        global workers
         worker_sock, worker_port = get_bound_socket(host="127.0.0.1", start=port + 1)
         worker_fd = worker_sock.fileno()
         worker_sock.set_inheritable(True)
         
         cmd = [sys.executable, "-u", "-m", "mvp.autorouter", str(manifest_path), instance_id, 
-               "--worker", "--worker-port", str(worker_port), "--worker-fd", str(worker_fd), "--gateway-port", str(port)]
+               "--worker", "--worker-port", str(worker_port), "--worker-fd", str(worker_fd), 
+               "--gateway-port", str(port), "--tier", tier]
                
-        worker_process = subprocess.Popen(cmd, pass_fds=(worker_fd,), stdout=sys.stdout, stderr=sys.stderr)
+        proc = subprocess.Popen(cmd, pass_fds=(worker_fd,), stdout=sys.stdout, stderr=sys.stderr)
         worker_sock.close() 
-        worker_active = True
+        
+        workers[tier]["process"] = proc
+        workers[tier]["port"] = worker_port
+        workers[tier]["active"] = False
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        spawn_worker()
+        # При старте компонента поднимаем только Prod
+        spawn_worker(tier="prod")
         asyncio.create_task(mesh.gossip_loop(get_local_contract_func=build_local_contract))
         asyncio.create_task(mesh.reaper_loop())
         yield
-        if worker_process:
-            worker_process.terminate()
+        for t in ["prod", "dev"]:
+            if workers[t]["process"]:
+                workers[t]["process"].terminate()
         await mesh.leave_network()
         await proxy_client.aclose()
         print(f"[{instance_id}] Shutting down Gateway...")
 
     app = FastAPI(title=component_title, description=component_subtitle, lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-
-    # Удален вызов update_component_status(...)
 
     def resolve_mock(ep_name, mock_cfg):
         if "value" in mock_cfg: return mock_cfg["value"]
@@ -136,26 +146,37 @@ else:
         httpx_timeout = None if raw_timeout == 0 else float(raw_timeout)
         
         async def route_proxy(request: Request, response: Response):
+            # 1. Извлекаем целевой тир из заголовка или берем активный по умолчанию
+            tier = request.headers.get("x-mvp-tier", active_tier).lower()
+            if tier not in ["prod", "dev", "mock"]:
+                tier = "mock"
+                
             async def fallback(err_msg):
-                console.print(f"[yellow]WARN: [MOCK TIER] /{ep_name} fallback triggered: {err_msg}[/yellow]")
+                console.print(f"[yellow]WARN: [MOCK TIER] /{ep_name} fallback triggered for tier '{tier}': {err_msg}[/yellow]")
                 response.headers["X-MVP-Mock-Fallback"] = "true"
                 response.headers["X-MVP-Original-Error"] = str(err_msg)
                 return resolve_mock(ep_name, mock_cfg) if mock_cfg else {"error": err_msg}
 
-            if not worker_active or not worker_port:
-                return await fallback("component is manually stopped or updating")
+            if tier == "mock":
+                return await fallback("Mock tier explicitly requested")
+
+            # 2. Проверяем, жив ли целевой воркер
+            target_worker = workers.get(tier)
+            if not target_worker or not target_worker["port"] or not target_worker["active"]:
+                return await fallback(f"Target tier '{tier}' is not active or currently updating")
 
             body = await request.body()
             headers = {k: v for k, v in request.headers.items() if k.lower() not in ["host", "content-length"]}
             
             try:
+                # 3. Маршрутизируем запрос
                 resp = await proxy_client.request(
                     method=request.method,
-                    url=f"http://127.0.0.1:{worker_port}/{ep_name}",
+                    url=f"http://127.0.0.1:{target_worker['port']}/{ep_name}",
                     content=body, headers=headers, timeout=httpx_timeout
                 )
                 if resp.status_code >= 500:
-                    return await fallback(f"Worker returned HTTP {resp.status_code}")
+                    return await fallback(f"{tier.upper()} worker returned HTTP {resp.status_code}")
                 return Response(content=resp.content, status_code=resp.status_code, headers=dict(resp.headers))
             except Exception as e:
                 return await fallback(str(e))
@@ -165,41 +186,85 @@ else:
         if ep_cfg.get("visibility", "public") == "public":
             app.post(f"/{ep_name}", name=ep_name)(make_proxy(ep_name, ep_cfg))
 
-    @app.post("/_sys/rm", include_in_schema=False)
-    def sys_rm():
-        global worker_active, worker_process
-        worker_active = False
-        if worker_process: worker_process.terminate()
-        return {"status": "worker stopped, mock tier activated"}
+    @app.post("/_sys/switch", include_in_schema=False)
+    async def sys_switch(request: Request):
+        global active_tier
+        data = await request.json()
+        target = data.get("tier", "prod").lower()
+        if target in ["prod", "dev", "mock"]:
+            active_tier = target
+        return {"status": f"Active tier switched to {active_tier}"}
 
-    @app.post("/_sys/update", include_in_schema=False)
-    def sys_update():
-        global worker_process, worker_active
-        worker_active = False
-        if (component_dir / ".git").exists():
-            print(f"[{instance_id}] Updating sources via git pull...")
-            subprocess.run(["git", "pull"], cwd=str(component_dir))
-        else:
-            print(f"[{instance_id}] Local directory detected, just reloading worker...")
+    @app.post("/_sys/update_dev", include_in_schema=False)
+    async def sys_update_dev():
+        global workers
+        workers["dev"]["active"] = False
+        if workers["dev"]["process"]:
+            workers["dev"]["process"].terminate()
+            workers["dev"]["process"].wait()
             
-        if worker_process:
-            worker_process.terminate()
-            worker_process.wait()
-        spawn_worker()
-        return {"status": "worker updated and restarted"}
+        async with git_lock:
+            if (component_dir / ".git").exists():
+                subprocess.run(["git", "checkout", "main"], cwd=str(component_dir))
+                subprocess.run(["git", "pull"], cwd=str(component_dir))
+        
+        spawn_worker(tier="dev")
+        return {"status": "dev worker updating on HEAD"}
+
+    @app.post("/_sys/update_prod", include_in_schema=False)
+    async def sys_update_prod(request: Request):
+        global workers
+        data = await request.json()
+        commit = data.get("commit")
+        
+        workers["prod"]["active"] = False
+        if workers["prod"]["process"]:
+            workers["prod"]["process"].terminate()
+            workers["prod"]["process"].wait()
+            
+        async with git_lock:
+            if (component_dir / ".git").exists() and commit:
+                subprocess.run(["git", "checkout", commit], cwd=str(component_dir))
+                workers["prod"]["commit"] = commit
+                
+        spawn_worker(tier="prod")
+        return {"status": f"prod worker updating to commit {commit}"}
+
+    @app.post("/_sys/promote", include_in_schema=False)
+    async def sys_promote():
+        global workers
+        workers["prod"]["active"] = False
+        if workers["prod"]["process"]:
+            workers["prod"]["process"].terminate()
+            workers["prod"]["process"].wait()
+            
+        async with git_lock:
+            if (component_dir / ".git").exists():
+                subprocess.run(["git", "checkout", "main"], cwd=str(component_dir))
+                subprocess.run(["git", "pull"], cwd=str(component_dir))
+                workers["prod"]["commit"] = "HEAD"
+                
+        spawn_worker(tier="prod")
+        return {"status": "promoted main to prod"}
 
     @app.post("/_sys/schema", include_in_schema=False)
-    async def sys_schema(request: Request):
-        global schema_cache
-        schema_cache = await request.json()
-        return {"status": "schema received"}
+    async def sys_schema(request: Request, tier: str = "prod"):
+        global schema_cache, workers
+        schema_cache[tier] = await request.json()
+        if tier in workers:
+            workers[tier]["active"] = True
+        return {"status": f"schema received for {tier}"}
 
     def build_local_contract():
-        schema = copy.deepcopy(schema_cache) if schema_cache else copy.deepcopy(app.openapi())
+        # Берем схему активного тира для отображения во внешней Gossip-сети
+        schema = copy.deepcopy(schema_cache.get(active_tier))
+        if not schema: schema = copy.deepcopy(app.openapi())
+        
         if "info" not in schema: schema["info"] = {}
         schema["info"]["title"] = component_title
         schema["info"]["description"] = component_subtitle
         schema["info"]["x-contract-path"] = str(manifest_path)
+        schema["info"]["x-active-tier"] = active_tier
         schema["info"].pop("version", None)
 
         filtered_paths = {}
@@ -241,16 +306,17 @@ else:
     @app.api_route("/openapi", methods=["GET", "POST"])
     def get_global_openapi():
         global_schema = {"title": "MVP Framework Manager", "modules": [], "components": {"schemas": {}}}
-        for instance_id, state in mesh.registry.items():
+        for i_id, state in mesh.registry.items():
             if getattr(state, "status", "active") == "dead":
                 continue
 
             info = state.contract.get("info", {})
             module_entry = {
-                "instance_id": instance_id, 
+                "instance_id": i_id, 
                 "title": info.get("title", "Unknown Module"),
                 "subtitle": info.get("description", ""), 
                 "contract_path": info.get("x-contract-path", ""),
+                "active_tier": info.get("x-active-tier", "prod"),
                 "base_url": state.base_url,
                 "endpoints": state.contract.get("paths", {})
             }

@@ -32,10 +32,6 @@ app = typer.Typer(help="MVP CLI tool to manage lifecycle of a component mesh")
 # ==========================================
 
 def add(component: str) -> str:
-    """
-    Программный аналог CLI команды add.
-    Развертывает компонент и возвращает его ID.
-    """
     work_dir, manifest_path = prepare_component_tree(component)
     new_id = launch_component_instance(work_dir, manifest_path)
     time.sleep(1.5)
@@ -43,17 +39,13 @@ def add(component: str) -> str:
 
 
 def contract(target: str) -> Any:
-    """Запрашивает контракт напрямую у запущенного компонента по его ID/имени."""
     return call(target, "contract", {})
 
 
 def register(manager_id: str, component_path: str) -> str:
-    # 1. Запускаем компонент
     instance_id = add(component_path)
-    # Ждем пару секунд, чтобы компонент успел зайти в Gossip Mesh
     time.sleep(2.0)
 
-    # 2. Ищем base_url через Mesh
     port, contract_data = asyncio.run(fetch_global_contract())
     base_url = ""
     if contract_data:
@@ -62,14 +54,11 @@ def register(manager_id: str, component_path: str) -> str:
         if match:
             base_url = match.get("base_url", "")
 
-    # 3. Снимаем контракт
     c_data = contract(instance_id)
 
-    # 4. ВНЕДРЯЕМ INSTANCE ID
     if isinstance(c_data, dict):
         c_data["instance_id"] = instance_id
 
-    # 5. Шлем в менеджер
     call(manager_id, "register", {
         "contract": c_data,
         "base_url": base_url
@@ -78,10 +67,10 @@ def register(manager_id: str, component_path: str) -> str:
     return instance_id
 
 
-def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = None) -> Any:
+def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = None, headers: Optional[dict] = None) -> Any:
     if data is None: data = {}
+    req_headers = headers or {}
     
-    # Запрашиваем глобальный контракт через Gossip Mesh
     port, contract_data = asyncio.run(fetch_global_contract())
     if not contract_data:
         raise RuntimeError("❌ MVP Framework mesh is empty or unreachable.")
@@ -99,13 +88,12 @@ def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = No
     url = f"{base_url}/{endpoint.lstrip('/')}"
 
     try:
-        resp = requests.post(url, json=data)
+        resp = requests.post(url, json=data, headers=req_headers)
         
-        # Перехват заголовка Mock Tier
         if resp.headers.get("X-MVP-Mock-Fallback") == "true":
             err_msg = resp.headers.get("X-MVP-Original-Error", "Unknown")
             typer.secho(
-                f"WARNING: Mock tier is responding on endpoint {url}. Status of the original endpoint: {err_msg}",
+                f"WARNING: Mock tier is responding on endpoint {url}. Reason: {err_msg}",
                 fg=typer.colors.YELLOW, 
                 err=True
             )
@@ -130,7 +118,6 @@ def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = No
 
 
 def purge(instance: str):
-    """Полностью убивает процесс Шлюза"""
     try:
         ps_out = subprocess.check_output(["ps", "aux"], text=True)
         for line in ps_out.splitlines():
@@ -142,52 +129,7 @@ def purge(instance: str):
         print(f"DEBUG ERROR in process cleanup: {e}")
 
 
-def rm(instance: str):
-    """Отключает Воркер, оставляя работать Шлюз в режиме Mock"""
-    try:
-        call(instance, "_sys/rm")
-    except Exception as e:
-        raise RuntimeError(f"Failed to switch {instance} to Mock Tier: {e}")
-
-
-@app.command(name="rm")
-def cli_rm(instance: str):
-    """Stop the actual code worker (Mock Tier takes over)."""
-    try:
-        rm(instance)
-        typer.echo(f"Instance {instance} REMOVED from MVP Framework")
-    except Exception as e:
-        typer.echo(f"❌ Error: {e}")
-        raise typer.Exit(1)
-
-
-@app.command(name="purge")
-def cli_purge(instance: str):
-    """Kill the component entirely (stops Gateway & removes from registry)."""
-    try:
-        purge(instance)
-        typer.echo(f"Instance {instance} PURGED from MVP Framework")
-    except Exception as e:
-        typer.echo(f"❌ Error: {e}")
-        raise typer.Exit(1)
-
-
-@app.command(name="update")
-def cli_update(instance: str):
-    """Git pull and restart the component worker (Mock Tier active during reload)."""
-    try:
-        call(instance, "_sys/update")
-        typer.echo(f"Instance {instance} successfully updated and restarted.")
-    except Exception as e:
-        typer.echo(f"❌ Error: {e}")
-        raise typer.Exit(1)
-
-
 def unregister(manager_id: str, instance_id: str) -> Any:
-    """
-    Убирает компонент из реестра конкретного менеджера,
-    после чего удаляет и останавливает сам инстанс компонента.
-    """
     comp_title = None
     try:
         c_data = contract(instance_id)
@@ -212,19 +154,14 @@ def unregister(manager_id: str, instance_id: str) -> Any:
         except Exception as e:
             print(f"Warning: Failed to unregister '{comp_title}' from manager: {e}")
 
-    rm(instance_id)
     purge(instance_id)
     return unreg_res or f"Instance {instance_id} unregistered and removed"
 
 
 def syslog(target: str, follow: bool = False) -> str:
-    """
-    Программный API для получения системного лога компонента через Шлюз.
-    """
     if not follow:
         return call(target, "syslog")
     else:
-        # Для стриминга через Gossip находим базу URL
         port, contract_data = asyncio.run(fetch_global_contract())
         if not contract_data:
             raise RuntimeError("❌ MVP Framework mesh is empty or unreachable.")
@@ -277,7 +214,6 @@ async def fetch_global_contract():
     return None, None
 
 def resolve_schema_type(schema_ref: dict, components: dict) -> str:
-    """Извлекает и форматирует структуру из Pydantic/OpenAPI схем"""
     if not schema_ref:
         return "None"
 
@@ -320,21 +256,27 @@ async def async_ls(component_filter: Optional[str] = None):
         subtitle = module.get("subtitle", "")
         base_url = module.get("base_url", "")
         manifest_path = module.get("contract_path", "")
+        active_tier = module.get("active_tier", "prod")
 
         header = Text()
         header.append("Component    ", style="dim")
         header.append(f"{title}\n", style="bold cyan")
-        header.append("Instance     ", style="dim")
-        header.append(f"{instance_id}\n", style="yellow")
-        
-        if manifest_path:
-            header.append("Contract     ", style="dim")
-            header.append(f"{manifest_path}\n", style="green")
-            
+
         if subtitle:
             header.append("Subtitle     ", style="dim")
             header.append(f"{subtitle}\n", style="italic")
 
+        header.append("Tier         ", style="dim")
+        tier_color = "magenta" if active_tier == "dev" else ("green" if active_tier == "prod" else "red")
+        header.append(f"{active_tier.upper()}\n\n", style=f"bold {tier_color}")
+
+        header.append("Instance     ", style="dim")
+        header.append(f"{instance_id}\n", style="yellow")
+
+        if manifest_path:
+            header.append("Contract     ", style="dim")
+            header.append(f"{manifest_path}\n", style="green")
+            
         endpoints_text = Text()
         endpoints = module.get("endpoints", {})
 
@@ -362,9 +304,8 @@ async def async_ls(component_filter: Optional[str] = None):
         console.print(Panel(panel_content, expand=True, border_style="blue"))
         console.print()
 
-@app.command(name="ls")
 def ls(component: Optional[str] = None):
-    """Lists all active modules dynamically from the Gossip network."""
+    """Programmatic API to list all active modules dynamically from the Gossip network."""
     asyncio.run(async_ls(component_filter=component))
 
 
@@ -382,7 +323,6 @@ def cli_add(component: str):
 @app.command(name="ls")
 def cli_ls(component: Optional[str] = None):
     """Show status of a specific component or all deployed instances."""
-    # async_ls теперь отвечает за всю красоту вывода
     ls(component)
 
 
@@ -390,7 +330,8 @@ def cli_ls(component: Optional[str] = None):
 def cli_call(
     target: str,
     endpoint: str,
-    json_parts: Optional[List[str]] = typer.Argument(None, help="Optional JSON payload split into parts")
+    json_parts: Optional[List[str]] = typer.Argument(None, help="Optional JSON payload split into parts"),
+    tier: Optional[str] = typer.Option(None, "--tier", help="Target tier to route to (prod, dev, mock)")
 ):
     """Call an endpoint on a deployed instance, optionally passing JSON input."""
     json_data = {}
@@ -402,8 +343,12 @@ def cli_call(
             typer.echo(f"❌ Invalid JSON: {e}")
             raise typer.Exit(1)
 
+    headers = {}
+    if tier:
+        headers["X-MVP-Tier"] = tier
+
     try:
-        result = call(target, endpoint, json_data)
+        result = call(target, endpoint, json_data, headers=headers)
         if isinstance(result, (dict, list)):
             typer.echo(json.dumps(result, indent=2, ensure_ascii=False))
         else:
@@ -441,6 +386,57 @@ def cli_register(
         raise typer.Exit(1)
 
 
+@app.command(name="switch")
+def cli_switch(instance: str, tier: str = typer.Argument(..., help="prod | dev | mock")):
+    """Switch default traffic routing for the component."""
+    if tier not in {"mock", "prod", "dev"}:
+        typer.echo("❌ Error: tier must be one of: mock, prod, dev")
+        raise typer.Exit(1)
+    try:
+        call(instance, "_sys/switch", {"tier": tier})
+        typer.echo(f"🔄 Switched default tier for {instance} to: {tier.upper()}")
+    except Exception as e:
+        typer.echo(f"❌ Error: {e}")
+        raise typer.Exit(1)
+
+
+@app.command(name="update")
+def cli_update(
+    instance: str,
+    dev: bool = typer.Option(False, "--dev", help="Pull HEAD and restart dev tier"),
+    prod: Optional[str] = typer.Option(None, "--prod", help="Checkout commit and restart prod tier"),
+    promote: bool = typer.Option(False, "--promote", help="Promote dev code (HEAD) to prod tier")
+):
+    """Update source code and restart specific tiers without downtime."""
+    try:
+        if dev:
+            call(instance, "_sys/update_dev")
+            typer.echo(f"✅ Dev tier of {instance} is pulling latest HEAD and restarting.")
+        elif prod:
+            call(instance, "_sys/update_prod", {"commit": prod})
+            typer.echo(f"✅ Prod tier of {instance} is checking out commit '{prod}' and restarting.")
+        elif promote:
+            call(instance, "_sys/promote")
+            typer.echo(f"✅ Dev tier successfully promoted to Prod for {instance}.")
+        else:
+            typer.echo("❌ Please specify an action: --dev, --prod <commit_hash>, or --promote")
+            raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"❌ Error: {e}")
+        raise typer.Exit(1)
+
+
+@app.command(name="purge")
+def cli_purge(instance: str):
+    """Kill the component entirely (stops Gateway & removes from registry)."""
+    try:
+        purge(instance)
+        typer.echo(f"Instance {instance} PURGED from MVP Framework")
+    except Exception as e:
+        typer.echo(f"❌ Error: {e}")
+        raise typer.Exit(1)
+
+
 @app.command()
 def log(id: str, follow: bool = typer.Option(False, "-f", "--follow", help="Follow the log output")):
     """Show log output of a specific component instance by ID."""
@@ -469,15 +465,6 @@ def log(id: str, follow: bool = typer.Option(False, "-f", "--follow", help="Foll
     except Exception as e:
         typer.echo(f"❌ Failed to read log file: {e}")
         raise typer.Exit(1)
-
-
-@app.command()
-def switch(component: str, tier: str = typer.Argument(..., help="Target tier: mock | prod | preprod")):
-    """Switch component to given tier."""
-    if tier not in {"mock", "prod", "preprod"}:
-        typer.echo("❌ Error: tier must be one of: mock, prod, preprod")
-        raise typer.Exit(1)
-    typer.echo(f"🔄 Switching {component} to tier: {tier}")
 
 
 @app.command()
