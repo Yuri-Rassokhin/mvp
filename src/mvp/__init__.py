@@ -6,7 +6,8 @@ from .framework import (
     contract, 
     register, 
     unregister, 
-    syslog, 
+    syslog,
+    switch,
     app
 )
 
@@ -18,6 +19,7 @@ __all__ = [
     "contract", 
     "register", 
     "unregister", 
-    "syslog", 
+    "syslog",
+    "switch",
     "app"
 ]

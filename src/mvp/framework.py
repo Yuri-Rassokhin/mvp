@@ -399,11 +399,8 @@ def cli_register(
 @app.command(name="switch")
 def cli_switch(instance: str, tier: str = typer.Argument(..., help="prod | dev | mock")):
     """Switch default traffic routing for the component."""
-    if tier not in {"mock", "prod", "dev"}:
-        typer.echo("❌ Error: tier must be one of: mock, prod, dev")
-        raise typer.Exit(1)
     try:
-        call(instance, "_sys/switch", {"tier": tier})
+        switch(instance, tier)
         typer.echo(f"🔄 Switched default tier for {instance} to: {tier.upper()}")
     except Exception as e:
         typer.echo(f"❌ Error: {e}")
