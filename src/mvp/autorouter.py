@@ -51,7 +51,16 @@ component_subtitle = manifest.get("subtitle", manifest.get("description", ""))
 start_funcs = manifest.get("start", [])
 
 source_config = manifest.get("source", {})
-target_branch = source_config.get("branch", "main")
+prod_branch = source_config.get("branch", "main")
+prod_commit = source_config.get("commit")
+
+dev_config = source_config.get("dev", {})
+if isinstance(dev_config, str):
+    dev_branch = dev_config
+elif isinstance(dev_config, dict):
+    dev_branch = dev_config.get("branch", "main")
+else:
+    dev_branch = "main"
 
 raw_endpoints = manifest.get("endpoints", {})
 
@@ -115,8 +124,25 @@ else:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # При старте компонента поднимаем только Prod
+        # 1. Запускаем Dev (выкачиваем ветку dev_branch)
+        async with git_lock:
+            if (component_dir / ".git").exists():
+                subprocess.run(["git", "fetch", "--all"], cwd=str(component_dir))
+                subprocess.run(["git", "checkout", dev_branch], cwd=str(component_dir))
+                subprocess.run(["git", "pull", "origin", dev_branch], cwd=str(component_dir))
+        spawn_worker(tier="dev")
+        
+        await asyncio.sleep(1.0) # Даем Dev-воркеру секунду на импорт файлов в память
+        
+        # 2. Запускаем Prod и оставляем файловую систему в состоянии Prod
+        async with git_lock:
+            if (component_dir / ".git").exists():
+                subprocess.run(["git", "checkout", prod_branch], cwd=str(component_dir))
+                subprocess.run(["git", "pull", "origin", prod_branch], cwd=str(component_dir))
+                if prod_commit:
+                    subprocess.run(["git", "checkout", prod_commit], cwd=str(component_dir))
         spawn_worker(tier="prod")
+
         asyncio.create_task(mesh.gossip_loop(get_local_contract_func=build_local_contract))
         asyncio.create_task(mesh.reaper_loop())
         yield
@@ -209,34 +235,25 @@ else:
             
         async with git_lock:
             if (component_dir / ".git").exists():
-                subprocess.run(["git", "checkout", target_branch], cwd=str(component_dir))
-                subprocess.run(["git", "pull"], cwd=str(component_dir))
-
+                subprocess.run(["git", "fetch", "--all"], cwd=str(component_dir))
+                subprocess.run(["git", "checkout", dev_branch], cwd=str(component_dir))
+                subprocess.run(["git", "pull", "origin", dev_branch], cwd=str(component_dir))
+        
         spawn_worker(tier="dev")
-        return {"status": "dev worker updating on HEAD"}
+        await asyncio.sleep(1.0)
+        
+        # Обязательно возвращаем ФС обратно на prod, чтобы шлюз не читал чужие моки
+        async with git_lock:
+            if (component_dir / ".git").exists():
+                subprocess.run(["git", "checkout", prod_branch], cwd=str(component_dir))
+                if prod_commit:
+                    subprocess.run(["git", "checkout", prod_commit], cwd=str(component_dir))
+                    
+        return {"status": f"dev worker updated from {dev_branch}"}
 
     @app.post("/_sys/update_prod", include_in_schema=False)
-    async def sys_update_prod(request: Request):
-        global workers
-        data = await request.json()
-        commit = data.get("commit")
-        
-        workers["prod"]["active"] = False
-        if workers["prod"]["process"]:
-            workers["prod"]["process"].terminate()
-            workers["prod"]["process"].wait()
-            
-        async with git_lock:
-            if (component_dir / ".git").exists() and commit:
-                subprocess.run(["git", "checkout", commit], cwd=str(component_dir))
-                workers["prod"]["commit"] = commit
-                
-        spawn_worker(tier="prod")
-        return {"status": f"prod worker updating to commit {commit}"}
-
-    @app.post("/_sys/promote", include_in_schema=False)
-    async def sys_promote():
-        global workers
+    async def sys_update_prod():
+        global workers, prod_branch, prod_commit
         workers["prod"]["active"] = False
         if workers["prod"]["process"]:
             workers["prod"]["process"].terminate()
@@ -244,12 +261,28 @@ else:
             
         async with git_lock:
             if (component_dir / ".git").exists():
-                subprocess.run(["git", "checkout", target_branch], cwd=str(component_dir))
-                subprocess.run(["git", "pull"], cwd=str(component_dir))
-                workers["prod"]["commit"] = "HEAD"
+                subprocess.run(["git", "fetch", "--all"], cwd=str(component_dir))
+                subprocess.run(["git", "checkout", prod_branch], cwd=str(component_dir))
+                subprocess.run(["git", "pull", "origin", prod_branch], cwd=str(component_dir))
+                
+                # Истинный GitOps: перечитываем контракт с диска после пулла
+                try:
+                    with manifest_path.open("r") as f:
+                        fresh_manifest = yaml.safe_load(f)
+                    fresh_source = fresh_manifest.get("source", {})
+                    prod_branch = fresh_source.get("branch", "main")
+                    prod_commit = fresh_source.get("commit")
+                except Exception as e:
+                    print(f"WARN: Failed to re-read manifest: {e}")
 
+                if prod_commit:
+                    subprocess.run(["git", "checkout", prod_commit], cwd=str(component_dir))
+                    workers["prod"]["commit"] = prod_commit
+                else:
+                    workers["prod"]["commit"] = "HEAD"
+                    
         spawn_worker(tier="prod")
-        return {"status": "promoted main to prod"}
+        return {"status": f"prod worker updated to {prod_commit or 'HEAD'}"}
 
     @app.post("/_sys/schema", include_in_schema=False)
     async def sys_schema(request: Request, tier: str = "prod"):

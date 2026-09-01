@@ -406,32 +406,27 @@ def cli_switch(instance: str, tier: str = typer.Argument(..., help="prod | dev |
         typer.echo(f"❌ Error: {e}")
         raise typer.Exit(1)
 
-
 @app.command(name="update")
 def cli_update(
     instance: str,
-    dev: bool = typer.Option(False, "--dev", help="Pull HEAD and restart dev tier"),
-    prod: Optional[str] = typer.Option(None, "--prod", help="Checkout commit and restart prod tier"),
-    promote: bool = typer.Option(False, "--promote", help="Promote dev code (HEAD) to prod tier")
+    dev: bool = typer.Option(False, "--dev", help="Update and restart dev tier from its branch"),
+    prod: bool = typer.Option(False, "--prod", help="Update and restart prod tier based on contract")
 ):
-    """Update source code and restart specific tiers without downtime."""
+    """Update source code and restart specific tiers based on YAML contract."""
+    if not dev and not prod:
+        typer.echo("❌ Please specify which tier to update: --dev or --prod (e.g., mvp update <id> --prod)")
+        raise typer.Exit(1)
+
     try:
         if dev:
             call(instance, "_sys/update_dev")
-            typer.echo(f"✅ Dev tier of {instance} is pulling latest HEAD and restarting.")
-        elif prod:
-            call(instance, "_sys/update_prod", {"commit": prod})
-            typer.echo(f"✅ Prod tier of {instance} is checking out commit '{prod}' and restarting.")
-        elif promote:
-            call(instance, "_sys/promote")
-            typer.echo(f"✅ Dev tier successfully promoted to Prod for {instance}.")
-        else:
-            typer.echo("❌ Please specify an action: --dev, --prod <commit_hash>, or --promote")
-            raise typer.Exit(1)
+            typer.echo(f"✅ Dev tier of {instance} successfully updated and restarted.")
+        if prod:
+            call(instance, "_sys/update_prod")
+            typer.echo(f"✅ Prod tier of {instance} successfully updated based on contract and restarted.")
     except Exception as e:
         typer.echo(f"❌ Error: {e}")
         raise typer.Exit(1)
-
 
 @app.command(name="purge")
 def cli_purge(instance: str):
