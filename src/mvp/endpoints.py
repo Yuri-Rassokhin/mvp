@@ -81,24 +81,42 @@ def load_module_from_ast(filepath, module_name, tree):
     return module
 
 def process_and_load_module(filepath, component_root):
-    # 1. Читаем файл один раз
+    file_dir = str(Path(filepath).parent.resolve())
+    
+    # === ИДЕАЛЬНАЯ НАСТРОЙКА ПУТЕЙ ИМПОРТА (PRO EXTENDED) ===
+    # 1. Аккуратно удаляем старые записи, если они есть, чтобы обновить приоритеты
+    if component_root in sys.path:
+        sys.path.remove(component_root)
+    if file_dir in sys.path:
+        sys.path.remove(file_dir)
+        
+    # 2. Выстраиваем железобетонный порядок поиска:
+    # Приоритет 2 (sys.path[1]): Корень репозитория (RevAccel)
+    # Это позволит находить абсолютные пути: from src.config import CACHE_TTL
+    sys.path.insert(0, component_root)
+    
+    # Приоритет 1 (sys.path[0]): Директория самого файла
+    # Это позволит находить соседние файлы: from cluster_naming import cluster_naming
+    sys.path.insert(0, file_dir)
+
+    # 1. Читаем файл
     with open(filepath, "r") as f:
         source = f.read()
     
-    # 2. Парсим
+    # 2. Parse
     tree = ast.parse(source, filename=filepath)
     
-    # 3. Проверяем безопасность (на том же объекте tree)
+    # 3. Security check
     check_ast_safe(tree, filepath)
 
-    # 4. Модифицируем AST (process_tree уже готов)
+    # 4. Modify AST
     tree = ast_processor.process_tree(tree, filepath)
     
-    # 5. Генерируем уникальное имя (на основе пути, чтобы избежать коллизий)
+    # 5. Unique module name
     rel_path = Path(filepath).relative_to(component_root)
     module_name = "dynamic." + ".".join(rel_path.with_suffix("").parts)
     
-    # 6. Загружаем
+    # 6. Load
     return load_module_from_ast(filepath, module_name, tree)
 
 # Вспомогательная проверка AST (без чтения файла)

@@ -37,12 +37,19 @@ parser.add_argument("--tier", type=str, default="prod") # Указание ти�
 args, unknown = parser.parse_known_args()
 
 manifest_path = Path(args.manifest_path).resolve()
-instance_id = args.instance_id
+instance_id = instance_id = args.instance_id # или твой вариант получения instance_id
 component_dir = manifest_path.parent
-component_root = str(component_dir.parent.resolve())
 
-if component_root not in sys.path: sys.path.insert(0, component_root)
-if str(component_dir) not in sys.path: sys.path.insert(0, str(component_dir))
+# Надежный поиск корня репозитория (где лежит .git) для работы абсолютных импортов из src/
+def get_repo_root(path: Path) -> Path:
+    curr = path.resolve()
+    while curr != curr.parent:
+        if (curr / ".git").exists():
+            return curr
+        curr = curr.parent
+    return path.parent.parent.parent.resolve()
+
+component_root = str(get_repo_root(manifest_path))
 
 with manifest_path.open("r") as f: manifest = yaml.safe_load(f)
 
@@ -130,9 +137,15 @@ else:
                 subprocess.run(["git", "fetch", "--all"], cwd=str(component_dir))
                 subprocess.run(["git", "checkout", dev_branch], cwd=str(component_dir))
                 subprocess.run(["git", "pull", "origin", dev_branch], cwd=str(component_dir))
+        
         spawn_worker(tier="dev")
         
-        await asyncio.sleep(1.0) # Даем Dev-воркеру секунду на импорт файлов в память
+        # ДОБАВЛЕНО: Ждем, пока dev-воркер не пришлет схему (значит он полностью загрузил код в память)
+        # Опрашиваем кэш с таймаутом до 15 секунд
+        for _ in range(150):
+            if schema_cache.get("dev") is not None:
+                break
+            await asyncio.sleep(0.1)
         
         # 2. Запускаем Prod и оставляем файловую систему в состоянии Prod
         async with git_lock:
