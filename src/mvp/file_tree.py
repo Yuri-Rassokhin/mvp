@@ -37,12 +37,13 @@ def prepare_component_tree(component: str):
 
     url = source["url"]
     commit = source.get("commit")
+    branch = source.get("branch", "main")  # Читаем ветку
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="mvp-src-"))
 
-    typer.echo(f"INFO: Cloning URL {url}")
-    subprocess.run(["git", "clone", url, str(tmp_dir)], check=True)
-
+    typer.echo(f"INFO: Cloning URL {url} (branch: {branch})")
+    subprocess.run(["git", "clone", "-b", branch, url, str(tmp_dir)], check=True)
+    
     if commit:
         typer.echo(f"INFO: Checking out commit {commit}")
         subprocess.run(["git", "-C", str(tmp_dir), "checkout", commit], check=True)

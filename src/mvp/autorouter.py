@@ -50,7 +50,11 @@ component_title = manifest.get("title", manifest.get("name", "unknown-component"
 component_subtitle = manifest.get("subtitle", manifest.get("description", ""))
 start_funcs = manifest.get("start", [])
 
+source_config = manifest.get("source", {})
+target_branch = source_config.get("branch", "main")
+
 raw_endpoints = manifest.get("endpoints", {})
+
 endpoints_config = {ep: {"visibility": "public"} for ep in raw_endpoints} if isinstance(raw_endpoints, list) else raw_endpoints
 public_funcs = {name for name, cfg in endpoints_config.items() if cfg.get("visibility", "public") == "public"}
 
@@ -205,9 +209,9 @@ else:
             
         async with git_lock:
             if (component_dir / ".git").exists():
-                subprocess.run(["git", "checkout", "main"], cwd=str(component_dir))
+                subprocess.run(["git", "checkout", target_branch], cwd=str(component_dir))
                 subprocess.run(["git", "pull"], cwd=str(component_dir))
-        
+
         spawn_worker(tier="dev")
         return {"status": "dev worker updating on HEAD"}
 
@@ -240,10 +244,10 @@ else:
             
         async with git_lock:
             if (component_dir / ".git").exists():
-                subprocess.run(["git", "checkout", "main"], cwd=str(component_dir))
+                subprocess.run(["git", "checkout", target_branch], cwd=str(component_dir))
                 subprocess.run(["git", "pull"], cwd=str(component_dir))
                 workers["prod"]["commit"] = "HEAD"
-                
+
         spawn_worker(tier="prod")
         return {"status": "promoted main to prod"}
 
