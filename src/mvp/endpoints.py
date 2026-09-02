@@ -16,6 +16,7 @@ from pathlib import Path
 import socket
 import uvicorn
 import types
+import unwrap
 
 from . import ast_processor
 
@@ -164,18 +165,21 @@ def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_
                     console.print(f"[red]ERROR: Start function '{fname}' failed in {filepath}: {e}[/red]")
                     raise RuntimeError(f"Contract violation: start function '{fname}' failed in {filepath}: {e}")
 
-        for name, func in inspect.getmembers(module, inspect.isfunction):
+        for name, func in getmembers(module, isfunction):
             if name in allowed_funcs:
-                sig = inspect.signature(func)
+                # ИСПРАВЛЕНИЕ: пробиваем все декораторы до оригинальной функции
+                original_func = unwrap(func)
+                sig = signature(original_func)
+                
                 fields = {}
                 for param_name, param in sig.parameters.items():
-                    ann = param.annotation if param.annotation != inspect._empty else Any
-                    default_val = param.default if param.default != inspect._empty else ...
+                    ann = param.annotation if param.annotation != _empty else Any
+                    default_val = param.default if param.default != _empty else ...
                     fields[param_name] = (ann, default_val)
                 Model = create_model(f"{name.title()}Input", **fields)
 
                 return_annotation = sig.return_annotation
-                response_model = return_annotation if return_annotation != inspect._empty else None
+                response_model = return_annotation if return_annotation != _empty else None
 
                 def make_endpoint(target_func):
                     async def endpoint_handler(data: Model):
