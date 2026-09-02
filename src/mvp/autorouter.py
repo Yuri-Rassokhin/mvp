@@ -17,6 +17,7 @@ import json
 import uvicorn
 import httpx
 
+from .mock_generator import generate_mock_from_schema
 from .endpoints import scan_and_import_endpoints
 from .mesh import find_free_port, get_bound_socket
 from .gossip import GossipMesh, GossipPayload, MESH_PROTOCOL_VERSION
@@ -179,8 +180,31 @@ else:
                     return json.load(f)
             except Exception as ex:
                 return {"error": f"Failed to load mock from {mock_path}: {ex}"}
+                
         if mock_cfg.get("type") == "auto":
-            return {"mock_status": "auto-generated", "notice": "Automatic fallback triggered by MVP"}
+            # Берем схему ТОЛЬКО у prod-воркера!
+            openapi = schema_cache.get("prod")
+            
+            if not openapi:
+                return {"mock_status": "error", "notice": "No PROD schema available to generate mocks. Ensure prod worker is running."}
+            
+            paths = openapi.get("paths", {})
+            ep_path = f"/{ep_name}"
+            
+            if ep_path in paths and "post" in paths[ep_path]:
+                responses = paths[ep_path]["post"].get("responses", {})
+                
+                # Ищем схему успешного ответа (200)
+                if "200" in responses:
+                    content = responses["200"].get("content", {})
+                    if "application/json" in content:
+                        response_schema = content["application/json"].get("schema", {})
+                        components_schemas = openapi.get("components", {}).get("schemas", {})
+                        
+                        return generate_mock_from_schema(response_schema, components_schemas)
+                        
+            return {"mock_status": "auto-generated", "notice": "No Pydantic response model found for this endpoint"}
+            
         return {}
 
     def make_proxy(ep_name, cfg):
@@ -308,8 +332,14 @@ else:
     def build_local_contract():
         # Берем схему активного тира для отображения во внешней Gossip-сети
         schema = copy.deepcopy(schema_cache.get(active_tier))
-        if not schema: schema = copy.deepcopy(app.openapi())
         
+        # Если мы в mock, одалживаем схему ТОЛЬКО у prod
+        if not schema and active_tier == "mock":
+            schema = copy.deepcopy(schema_cache.get("prod"))
+            
+        if not schema: 
+            schema = copy.deepcopy(app.openapi())
+            
         if "info" not in schema: schema["info"] = {}
         schema["info"]["title"] = component_title
         schema["info"]["description"] = component_subtitle
