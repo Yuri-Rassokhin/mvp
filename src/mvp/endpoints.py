@@ -16,7 +16,7 @@ from pathlib import Path
 import socket
 import uvicorn
 import types
-import unwrap
+from typing import get_type_hints, Any
 
 from . import ast_processor
 
@@ -165,31 +165,48 @@ def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_
                     console.print(f"[red]ERROR: Start function '{fname}' failed in {filepath}: {e}[/red]")
                     raise RuntimeError(f"Contract violation: start function '{fname}' failed in {filepath}: {e}")
 
-        for name, func in getmembers(module, isfunction):
+        for name, func in inspect.getmembers(module, inspect.isfunction):
             if name in allowed_funcs:
-                # ИСПРАВЛЕНИЕ: пробиваем все декораторы до оригинальной функции
-                original_func = unwrap(func)
-                sig = signature(original_func)
+                original_func = inspect.unwrap(func)
+                
+                # --- ИСТИННОЕ ИЗВЛЕЧЕНИЕ ТИПОВ ---
+                # Используем globalns=module.__dict__, чтобы typing смог развернуть ForwardRef
+                # и найти Pydantic-модели, определенные в динамическом модуле.
+                try:
+                    hints = get_type_hints(original_func, globalns=module.__dict__)
+                except Exception as e:
+                    print(f"WARN: Failed to evaluate type hints for {name}: {e}")
+                    hints = {}
+
+                sig = inspect.signature(original_func)
                 
                 fields = {}
                 for param_name, param in sig.parameters.items():
-                    ann = param.annotation if param.annotation != _empty else Any
-                    default_val = param.default if param.default != _empty else ...
+                    ann = hints.get(param_name, Any)
+                    default_val = param.default if param.default != inspect._empty else ...
                     fields[param_name] = (ann, default_val)
                 Model = create_model(f"{name.title()}Input", **fields)
 
-                return_annotation = sig.return_annotation
-                response_model = return_annotation if return_annotation != _empty else None
+                # Вытаскиваем готовый Pydantic класс прямо из распарсенных подсказок!
+                response_model = hints.get("return", None)
 
-                def make_endpoint(target_func):
+                def make_endpoint(target_func, resp_model, ep_name, docstring):
                     async def endpoint_handler(data: Model):
-                        # Логика выполняется без таймаутов, Gateway сам оборвет ожидание
                         payload_dict = data.model_dump() if hasattr(data, 'model_dump') else data.dict()
 
                         if inspect.iscoroutinefunction(target_func):
                             return await target_func(**payload_dict)
                         return await run_in_threadpool(target_func, **payload_dict)
-
+                    
+                    # Физически подменяем аннотации для FastAPI!
+                    endpoint_handler.__annotations__ = {'data': Model}
+                    if resp_model:
+                        endpoint_handler.__annotations__['return'] = resp_model
+                        
+                    # Маскируем хендлер под оригинальную функцию
+                    endpoint_handler.__name__ = ep_name
+                    endpoint_handler.__doc__ = docstring
+                    
                     return endpoint_handler
 
                 ep_config = endpoints_config.get(name, {})
@@ -204,7 +221,7 @@ def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_
                     name=name, 
                     response_model=response_model,
                     openapi_extra=openapi_extra if openapi_extra else None
-                )(make_endpoint(func))
+                )(make_endpoint(func, response_model, name, original_func.__doc__))
 
                 activated_funcs.add(name)
                 print(f"INFO: Endpoint /{name} activated from {filepath} (visibility: {ep_config.get('visibility', 'public')})")
@@ -215,4 +232,3 @@ def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_
         raise RuntimeError(f"Contract violation: endpoint '{func_name}' promised in contract, but missing in codebase")
 
     return modules
-

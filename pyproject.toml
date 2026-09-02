@@ -18,8 +18,7 @@ dependencies = [
     "rich",
     "pydantic",
     "httpx",
-    "polyfactory",
-    "unwrap"
+    "polyfactory"
 ]
 
 [project.scripts]

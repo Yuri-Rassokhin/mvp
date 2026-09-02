@@ -38,7 +38,7 @@ parser.add_argument("--tier", type=str, default="prod") # Указание ти�
 args, unknown = parser.parse_known_args()
 
 manifest_path = Path(args.manifest_path).resolve()
-instance_id = instance_id = args.instance_id # или твой вариант получения instance_id
+instance_id = args.instance_id # или твой вариант получения instance_id
 component_dir = manifest_path.parent
 
 # Надежный поиск корня репозитория (где лежит .git) для работы абсолютных импортов из src/
@@ -79,13 +79,22 @@ if args.worker:
     @asynccontextmanager
     async def worker_lifespan(app: FastAPI):
         async def _push_schema():
-            await asyncio.sleep(0.5)
-            try:
-                async with httpx.AsyncClient() as client:
-                    # Воркер сообщает шлюзу свой тир при передаче схемы
-                    await client.post(f"http://127.0.0.1:{args.gateway_port}/_sys/schema?tier={args.tier}", json=app.openapi())
-            except Exception as e:
-                print(f"WARN: Worker failed to push schema to gateway: {e}")
+            # Повторяем попытки 10 раз, пока Gateway не начнет принимать HTTP
+            for attempt in range(10):
+                await asyncio.sleep(1.0)
+                try:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        resp = await client.post(
+                            f"http://127.0.0.1:{args.gateway_port}/_sys/schema?tier={args.tier}", 
+                            json=app.openapi()
+                        )
+                        if resp.status_code == 200:
+                            print(f"INFO: Worker {args.tier.upper()} successfully pushed schema to Gateway.")
+                            break
+                except Exception as e:
+                    if attempt == 9:
+                        print(f"WARN: Worker {args.tier.upper()} failed to push schema after 10 attempts: {repr(e)}")
+        
         asyncio.create_task(_push_schema())
         yield
 
@@ -105,6 +114,8 @@ else:
     
     # --- СОСТОЯНИЕ ШЛЮЗА ---
     active_tier = "prod"
+    last_worker_port = port  # отслеживаем последний выданный порт
+    
     workers = {
         "prod": {"process": None, "port": None, "active": False, "commit": "HEAD"},
         "dev": {"process": None, "port": None, "active": False, "commit": "HEAD"}
@@ -114,8 +125,12 @@ else:
     git_lock = asyncio.Lock()
     
     def spawn_worker(tier="prod"):
-        global workers
-        worker_sock, worker_port = get_bound_socket(host="127.0.0.1", start=port + 1)
+        global workers, last_worker_port
+        
+        next_start = last_worker_port + 1 if last_worker_port < 8990 else port + 1
+        worker_sock, worker_port = get_bound_socket(host="127.0.0.1", start=next_start)
+        last_worker_port = worker_port
+        
         worker_fd = worker_sock.fileno()
         worker_sock.set_inheritable(True)
         
@@ -141,12 +156,8 @@ else:
         
         spawn_worker(tier="dev")
         
-        # ДОБАВЛЕНО: Ждем, пока dev-воркер не пришлет схему (значит он полностью загрузил код в память)
-        # Опрашиваем кэш с таймаутом до 15 секунд
-        for _ in range(150):
-            if schema_cache.get("dev") is not None:
-                break
-            await asyncio.sleep(0.1)
+        # Даем Dev-воркеру 3 секунды на инициализацию и чтение файлов в память
+        await asyncio.sleep(3.0)
         
         # 2. Запускаем Prod и оставляем файловую систему в состоянии Prod
         async with git_lock:
@@ -277,7 +288,7 @@ else:
                 subprocess.run(["git", "pull", "origin", dev_branch], cwd=str(component_dir))
         
         spawn_worker(tier="dev")
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(3.0)
         
         # Обязательно возвращаем ФС обратно на prod, чтобы шлюз не читал чужие моки
         async with git_lock:
