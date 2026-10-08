@@ -70,57 +70,68 @@ def register(manager_id: str, component_path: str) -> str:
 
 
 # TODO: This function should become a hook for integration to the container management layer of a cloud ecosystem
-def _resolve_target(modules: List[Dict[str, Any]], instance_id: Optional[str] = None, module_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def _resolve_target(modules: List[Dict[str, Any]], instance: Optional[str] = None, module: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Service Discovery Hook. 
-    Currently returns the first matching instance. 
-    Future: Can be replaced with Azure Load Balancer hook or Round-Robin logic.
+    Future: Replace with Azure Load Balancer hook or Round-Robin logic.
     """
-    if instance_id:
-        return next((m for m in modules if m.get("instance_id") == instance_id), None)
+    if instance:
+        return next((m for m in modules if m.get("instance_id") == instance), None)
     
-    if module_name:
-        # Позже здесь можно собирать список (matches = [...]) и делать random.choice или round-robin
-        return next((m for m in modules if m.get("title") == module_name), None)
+    if module:
+        return next((m for m in modules if m.get("title") == module), None)
         
     return None
 
+def call(*, endpoint: str, module: Optional[str] = None, instance: Optional[str] = None, data: Optional[Union[dict, list, str]] = None, headers: Optional[dict] = None) -> Any:
+    """
+    Calls an endpoint on a deployed instance in the MVP Framework.
+    ALL arguments must be passed as keyword arguments.
+    You must provide EXACTLY ONE routing parameter: either `instance` or `module`.
+    """
+    if not instance and not module:
+        raise ValueError("❌ Routing error: You must provide either 'instance' or 'module'.")
+    if instance and module:
+        raise ValueError("❌ Routing error: Provide ONLY ONE of 'instance' or 'module', not both.")
 
-def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = None, headers: Optional[dict] = None) -> Any:
     if data is None: data = {}
     req_headers = headers or {}
     req_headers["X-API-Key"] = SECRET_TOKEN
-    
+
     port, contract_data = asyncio.run(fetch_global_contract())
     if not contract_data:
         raise RuntimeError("❌ MVP Framework mesh is empty or unreachable.")
 
     modules = contract_data.get("modules", [])
-    match = next((m for m in modules if m.get("instance_id") == target or m.get("title") == target), None)
+    
+    match = _resolve_target(modules, instance=instance, module=module)
 
-    if not match: 
-        raise ValueError(f"❌ No instance found with ID or name '{target}'")
+    if not match:
+        target_desc = f"instance ID '{instance}'" if instance else f"module name '{module}'"
+        raise ValueError(f"❌ No matching service found for {target_desc}")
 
     base_url = match.get("base_url")
-    if not base_url: 
-        raise RuntimeError(f"❌ No base_url found for instance '{target}'")
+    if not base_url:
+        target_desc = instance or module
+        raise RuntimeError(f"❌ No base_url found for resolved target '{target_desc}'")
 
     url = f"{base_url}/{endpoint.lstrip('/')}"
 
     try:
         resp = requests.post(url, json=data, headers=req_headers)
-        
+
         if resp.headers.get("X-MVP-Mock-Fallback") == "true":
             err_msg = resp.headers.get("X-MVP-Original-Error", "Unknown")
             typer.secho(
                 f"WARNING: Mock tier is responding on endpoint {url}. Reason: {err_msg}",
-                fg=typer.colors.YELLOW, 
+                fg=typer.colors.YELLOW,
                 err=True
             )
 
         resp.raise_for_status()
         try: return resp.json()
         except json.JSONDecodeError: return resp.text
+        
     except requests.HTTPError as e:
         response = e.response
         detail = ""
@@ -135,6 +146,7 @@ def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = No
         raise RuntimeError(f"❌ Request failed: {e}{suffix}") from e
     except Exception as e:
         raise RuntimeError(f"❌ Request failed: {e}") from e
+
 
 
 def purge(instance: str):
