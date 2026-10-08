@@ -370,12 +370,22 @@ def cli_ls(component: Optional[str] = None):
 
 @app.command(name="call")
 def cli_call(
-    target: str,
-    endpoint: str,
+    endpoint: str = typer.Argument(..., help="The endpoint path to call (e.g., read_excel)"),
+    module: Optional[str] = typer.Option(None, "--module", "-m", help="Target module name (e.g., 'Excel Reader')"),
+    instance: Optional[str] = typer.Option(None, "--instance", "-i", help="Target instance ID (32-character hash)"),
     json_parts: Optional[List[str]] = typer.Argument(None, help="Optional JSON payload split into parts"),
     tier: Optional[str] = typer.Option(None, "--tier", help="Target tier to route to (prod, dev, mock)")
 ):
     """Call an endpoint on a deployed instance, optionally passing JSON input."""
+    
+    # Явная валидация флагов на уровне CLI для удобного UX
+    if not instance and not module:
+        typer.echo("❌ CLI Error: You must provide either --instance (-i) or --module (-m).")
+        raise typer.Exit(1)
+    if instance and module:
+        typer.echo("❌ CLI Error: Provide ONLY ONE of --instance or --module, not both.")
+        raise typer.Exit(1)
+
     json_data = {}
     if json_parts:
         json_str = " ".join(json_parts)
@@ -390,11 +400,20 @@ def cli_call(
         headers["X-MVP-Tier"] = tier
 
     try:
-        result = call(target, endpoint, json_data, headers=headers)
+        # Пробрасываем флаги в строго именованную функцию ядра
+        result = call(
+            endpoint=endpoint, 
+            module=module, 
+            instance=instance, 
+            data=json_data, 
+            headers=headers
+        )
+        
         if isinstance(result, (dict, list)):
             typer.echo(json.dumps(result, indent=2, ensure_ascii=False))
         else:
             typer.echo(str(result))
+            
     except Exception as e:
         typer.echo(str(e))
         raise typer.Exit(1)
