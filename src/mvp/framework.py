@@ -4,7 +4,7 @@ import signal
 import subprocess
 import time
 import json
-from typing import List, Optional, Any, Union
+from typing import List, Optional, Any, Union, Dict
 from pathlib import Path
 import requests
 import typer
@@ -16,6 +16,8 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.console import Group
 from rich.rule import Rule
+
+SECRET_TOKEN = os.environ.get("COGNITIVE_CORE_API_KEY", "default_secret")
 
 from .file_tree import (
     tail_log_until_uvicorn_ready,
@@ -67,9 +69,27 @@ def register(manager_id: str, component_path: str) -> str:
     return instance_id
 
 
+# TODO: This function should become a hook for integration to the container management layer of a cloud ecosystem
+def _resolve_target(modules: List[Dict[str, Any]], instance_id: Optional[str] = None, module_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Service Discovery Hook. 
+    Currently returns the first matching instance. 
+    Future: Can be replaced with Azure Load Balancer hook or Round-Robin logic.
+    """
+    if instance_id:
+        return next((m for m in modules if m.get("instance_id") == instance_id), None)
+    
+    if module_name:
+        # Позже здесь можно собирать список (matches = [...]) и делать random.choice или round-robin
+        return next((m for m in modules if m.get("title") == module_name), None)
+        
+    return None
+
+
 def call(target: str, endpoint: str, data: Optional[Union[dict, list, str]] = None, headers: Optional[dict] = None) -> Any:
     if data is None: data = {}
     req_headers = headers or {}
+    req_headers["X-API-Key"] = SECRET_TOKEN
     
     port, contract_data = asyncio.run(fetch_global_contract())
     if not contract_data:
@@ -186,7 +206,7 @@ def syslog(target: str, follow: bool = False) -> str:
         url = f"{base_url}/syslog-stream"
 
         try:
-            with requests.post(url, stream=True) as resp:
+            with requests.post(url, stream=True, headers={"X-API-Key": SECRET_TOKEN}) as resp:
                 resp.raise_for_status()
                 for line in resp.iter_lines():
                     if line:
@@ -202,7 +222,7 @@ def syslog(target: str, follow: bool = False) -> str:
 console = Console()
 
 async def fetch_global_contract():
-    headers = {"X-Mesh-Version": MESH_PROTOCOL_VERSION}
+    headers = {"X-Mesh-Version": MESH_PROTOCOL_VERSION, "X-API-Key": SECRET_TOKEN}
     async with httpx.AsyncClient(timeout=0.5) as client:
         for port in range(PORT_RANGE[0], PORT_RANGE[1]):
             try:

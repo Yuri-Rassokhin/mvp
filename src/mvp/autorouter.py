@@ -5,7 +5,8 @@ import subprocess
 import argparse
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import Response, Request, HTTPException
+from fastapi import Response, Request, HTTPException, Security, Depends
+from fastapi.security.api_key import APIKeyHeader
 from rich.console import Console
 import os
 import inspect
@@ -25,6 +26,10 @@ from .gossip import GossipMesh, GossipPayload, MESH_PROTOCOL_VERSION
 ### SETTINGS ###
 MOCK_DEFAULT_TIMEOUT = 0.0
 
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
+SECRET_TOKEN = os.environ.get("COGNITIVE_CORE_API_KEY", "default_secret")
+
+
 console = Console(force_terminal=True, width=10000)
 
 parser = argparse.ArgumentParser(allow_abbrev=False)
@@ -40,6 +45,12 @@ args, unknown = parser.parse_known_args()
 manifest_path = Path(args.manifest_path).resolve()
 instance_id = args.instance_id # или твой вариант получения instance_id
 component_dir = manifest_path.parent
+
+
+
+async def verify_api_key(api_key: str = Security(api_key_header)):
+    if api_key != SECRET_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid API Key")
 
 # Надежный поиск корня репозитория (где лежит .git) для работы абсолютных импортов из src/
 def get_repo_root(path: Path) -> Path:
@@ -86,7 +97,8 @@ if args.worker:
                     async with httpx.AsyncClient(timeout=5.0) as client:
                         resp = await client.post(
                             f"http://127.0.0.1:{args.gateway_port}/_sys/schema?tier={args.tier}", 
-                            json=app.openapi()
+                            json=app.openapi(),
+                            headers={"X-API-Key": SECRET_TOKEN}
                         )
                         if resp.status_code == 200:
                             print(f"INFO: Worker {args.tier.upper()} successfully pushed schema to Gateway.")
@@ -138,7 +150,7 @@ else:
                "--worker", "--worker-port", str(worker_port), "--worker-fd", str(worker_fd), 
                "--gateway-port", str(port), "--tier", tier]
                
-        proc = subprocess.Popen(cmd, pass_fds=(worker_fd,), stdout=sys.stdout, stderr=sys.stderr)
+        proc = subprocess.Popen(cmd, pass_fds=(worker_fd,), stdout=sys.stdout, stderr=sys.stderr, env=os.environ)
         worker_sock.close() 
         
         workers[tier]["process"] = proc
@@ -178,8 +190,13 @@ else:
         await proxy_client.aclose()
         print(f"[{instance_id}] Shutting down Gateway...")
 
-    app = FastAPI(title=component_title, description=component_subtitle, lifespan=lifespan)
-    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+    app = FastAPI(title=component_title, description=component_subtitle, lifespan=lifespan, dependencies=[Depends(verify_api_key)])
+    app.add_middleware(CORSMiddleware,
+                        allow_origins=["https://localhost:3000", "https://api.cognitive-core.io"],
+                        allow_credentials=True, 
+                        allow_methods=["*"], 
+                        allow_headers=["*"],
+                        )
 
     def resolve_mock(ep_name, mock_cfg):
         if "value" in mock_cfg: return mock_cfg["value"]
@@ -415,6 +432,98 @@ else:
             for schema_name, schema_def in state.contract.get("components", {}).get("schemas", {}).items():
                 global_schema["components"]["schemas"][schema_name] = schema_def
         return global_schema
+
+    @app.api_route("/integration", methods=["GET", "POST"])
+    def get_strict_openapi(request: Request):
+        # 1. Базовый строгий каркас OpenAPI 3.0.3
+        global_schema = {
+            "openapi": "3.0.3",
+            "info": {
+                "title": "Cognitive Core Platform",
+                "version": "1.0.0",
+                "description": "Unified Enterprise API (Dynamic Mesh Gateway)"
+            },
+            "servers": [
+                {
+                    # Узел динамически указывает сам себя как глобальный Gateway
+                    "url": str(request.base_url).rstrip("/"),
+                    "description": "Mesh Global Gateway"
+                }
+            ],
+            "paths": {},
+            "components": {
+                "schemas": {}
+            }
+        }
+
+        for i_id, state in mesh.registry.items():
+            if getattr(state, "status", "active") == "dead":
+                continue
+
+            contract = state.contract
+            if not contract: continue
+
+            node_title = contract.get("info", {}).get("title", "Unknown Module")
+            
+            # 2. Сбор и маппинг путей
+            for path_key, path_item in contract.get("paths", {}).items():
+                new_path_item = copy.deepcopy(path_item)
+                
+                # Добавляем теги для красивой группировки эндпоинтов в UI Microsoft
+                for method, op in new_path_item.items():
+                    if isinstance(op, dict) and "tags" not in op:
+                        op["tags"] = [node_title]
+                
+                global_schema["paths"][path_key] = new_path_item
+
+            # 3. Сбор схем данных (Input/Output Pydantic модели)
+            schemas = contract.get("components", {}).get("schemas", {})
+            for s_name, s_def in schemas.items():
+                # Т.к. Pydantic обычно дает уникальные имена моделям (напр. EthicsInput), 
+                # мы можем безопасно сливать их в один общий словарь компонентов.
+                global_schema["components"]["schemas"][s_name] = copy.deepcopy(s_def)
+
+        return global_schema
+
+    # 4. УНИВЕРСАЛЬНЫЙ MESH-ПРОКСИ (ТОТ САМЫЙ GATEWAY)
+    # ВАЖНО: Этот декоратор с {path:path} должен быть объявлен ПОСЛЕДНИМ из всех маршрутов,
+    # так как он перехватывает все пути, которые не были обработаны локально (make_proxy).
+    @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"], include_in_schema=False)
+    async def global_mesh_proxy(request: Request, path: str):
+        # Игнорируем внутренние системные вызовы фреймворка
+        if path.startswith("_sys") or path in ["contract", "network", "openapi", "integration", "syslog", "syslog-stream"]:
+            raise HTTPException(status_code=404, detail="Not found")
+            
+        target_base_url = None
+        
+        # Ищем в Gossip-сети узел, который владеет запрошенным путем
+        for i_id, state in mesh.registry.items():
+            if getattr(state, "status", "active") == "dead": continue
+            if not state.contract: continue
+            
+            # Если запрошенный путь числится в контракте чужого узла
+            if f"/{path}" in state.contract.get("paths", {}):
+                target_base_url = state.base_url
+                break
+                
+        if not target_base_url:
+            raise HTTPException(status_code=404, detail=f"Path /{path} not found in active mesh network")
+            
+        # Формируем прокси-запрос
+        body = await request.body()
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in ["host", "content-length"]}
+        
+        try:
+            resp = await proxy_client.request(
+                method=request.method,
+                url=f"{target_base_url}/{path}",
+                content=body,
+                headers=headers,
+                params=request.query_params
+            )
+            return Response(content=resp.content, status_code=resp.status_code, headers=dict(resp.headers))
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Mesh Gateway Error (Target: {target_base_url}): {str(e)}")
 
     if __name__ == "__main__":
         config = uvicorn.Config(app, loop="asyncio")

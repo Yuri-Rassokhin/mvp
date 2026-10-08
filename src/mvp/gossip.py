@@ -1,3 +1,4 @@
+import os
 import asyncio
 import time
 import random
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 REAPER_PATIENCE = 30.0 # How long the Reaper will wait before killing inactive nodes
 MESH_PROTOCOL_VERSION = "1.0"
 PORT_RANGE = (8500, 8600)
+SECRET_TOKEN = os.environ.get("COGNITIVE_CORE_API_KEY", "default_secret")
 
 class InstanceState(BaseModel):
     base_url: str
@@ -46,7 +48,8 @@ class GossipMesh:
 
         headers = {
             "X-Mesh-Version": MESH_PROTOCOL_VERSION, 
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "X-API-Key": SECRET_TOKEN
         }
         
         # Рассылаем прощальное письмо всем известным узлам параллельно
@@ -76,7 +79,8 @@ class GossipMesh:
         print(f"[{self.instance_id}] Bootstrapping (Mesh v{MESH_PROTOCOL_VERSION})...")
         headers = {
                 "X-Mesh-Version": MESH_PROTOCOL_VERSION,
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
+                "X-API-Key": SECRET_TOKEN
                 }
         
         # Обновляем наш локальный стейт перед тем, как стучаться к соседям
@@ -119,7 +123,8 @@ class GossipMesh:
     async def gossip_loop(self, get_local_contract_func):
         headers = {
             "X-Mesh-Version": MESH_PROTOCOL_VERSION,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "X-API-Key": SECRET_TOKEN
         }
 
         # Локальная функция для фоновой отправки без блокировки цикла
