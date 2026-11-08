@@ -39,35 +39,9 @@ def add(component: str) -> str:
     time.sleep(1.5)
     return new_id
 
-
-def contract(target: str) -> Any:
-    return call(target, "contract", {})
-
-
-def register(manager_id: str, component_path: str) -> str:
-    instance_id = add(component_path)
-    time.sleep(2.0)
-
-    port, contract_data = asyncio.run(fetch_global_contract())
-    base_url = ""
-    if contract_data:
-        modules = contract_data.get("modules", [])
-        match = next((m for m in modules if m.get("instance_id") == instance_id), None)
-        if match:
-            base_url = match.get("base_url", "")
-
-    c_data = contract(instance_id)
-
-    if isinstance(c_data, dict):
-        c_data["instance_id"] = instance_id
-
-    call(manager_id, "register", {
-        "contract": c_data,
-        "base_url": base_url
-    })
-
-    return instance_id
-
+def contract(*, module: Optional[str] = None, instance: Optional[str] = None) -> Any:
+    """Fetch contract JSON explicitly by module name or instance ID."""
+    return call(endpoint="contract", module=module, instance=instance, data={})
 
 # TODO: This function should become a hook for integration to the container management layer of a cloud ecosystem
 def _resolve_target(modules: List[Dict[str, Any]], instance: Optional[str] = None, module: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -160,36 +134,6 @@ def purge(instance: str):
     except Exception as e:
         print(f"DEBUG ERROR in process cleanup: {e}")
 
-
-def unregister(manager_id: str, instance_id: str) -> Any:
-    comp_title = None
-    try:
-        c_data = contract(instance_id)
-        if isinstance(c_data, dict):
-            comp_title = c_data.get("title") or c_data.get("info", {}).get("title")
-    except Exception:
-        pass
-
-    if not comp_title:
-        port, contract_data = asyncio.run(fetch_global_contract())
-        if contract_data:
-            modules = contract_data.get("modules", [])
-            for entry in modules:
-                if entry.get("instance_id") == instance_id:
-                    comp_title = entry.get("title")
-                    break
-
-    unreg_res = None
-    if comp_title:
-        try:
-            unreg_res = call(manager_id, "unregister", {"title": comp_title})
-        except Exception as e:
-            print(f"Warning: Failed to unregister '{comp_title}' from manager: {e}")
-
-    purge(instance_id)
-    return unreg_res or f"Instance {instance_id} unregistered and removed"
-
-
 def switch(instance: str, tier: str) -> Any:
     """
     Программный API для переключения активного тира компонента.
@@ -197,22 +141,27 @@ def switch(instance: str, tier: str) -> Any:
     """
     if tier not in {"mock", "prod", "dev"}:
         raise ValueError("Tier must be one of: mock, prod, dev")
-    return call(instance, "_sys/switch", {"tier": tier})
+    
+    # instance - это точно instance_id
+    return call(endpoint="_sys/switch", instance=instance, data={"tier": tier})
 
-
-def syslog(target: str, follow: bool = False) -> str:
+def syslog(*, module: Optional[str] = None, instance: Optional[str] = None, follow: bool = False) -> str:
+    """Fetch logs explicitly by module name or instance ID."""
     if not follow:
-        return call(target, "syslog")
+        return call(endpoint="syslog", module=module, instance=instance)
     else:
         port, contract_data = asyncio.run(fetch_global_contract())
         if not contract_data:
             raise RuntimeError("❌ MVP Framework mesh is empty or unreachable.")
 
         modules = contract_data.get("modules", [])
-        match = next((m for m in modules if m.get("instance_id") == target or m.get("title") == target), None)
+        
+        # Используем наш новый чистый хук Service Discovery
+        match = _resolve_target(modules, instance=instance, module=module)
 
         if not match:
-            raise ValueError(f"❌ No instance found with ID or name '{target}'")
+            target_desc = f"instance ID '{instance}'" if instance else f"module name '{module}'"
+            raise ValueError(f"❌ No matching service found for {target_desc}")
 
         base_url = match.get("base_url")
         url = f"{base_url}/syslog-stream"
@@ -229,6 +178,7 @@ def syslog(target: str, follow: bool = False) -> str:
             raise RuntimeError(f"❌ Log streaming failed: {e}")
 
         return ""
+
 
 
 console = Console()
@@ -420,10 +370,20 @@ def cli_call(
 
 
 @app.command(name="contract")
-def cli_contract(target: str):
+def cli_contract(
+    module: Optional[str] = typer.Option(None, "--module", "-m", help="Target module name (e.g., 'Excel Reader')"),
+    instance: Optional[str] = typer.Option(None, "--instance", "-i", help="Target instance ID (32-character hash)")
+):
     """Fetch contract JSON from a deployed component instance."""
+    if not instance and not module:
+        typer.echo("❌ CLI Error: You must provide either --instance (-i) or --module (-m).")
+        raise typer.Exit(1)
+    if instance and module:
+        typer.echo("❌ CLI Error: Provide ONLY ONE of --instance or --module, not both.")
+        raise typer.Exit(1)
+
     try:
-        res = contract(target)
+        res = contract(module=module, instance=instance)
         if isinstance(res, (dict, list)):
             typer.echo(json.dumps(res, indent=2, ensure_ascii=False))
         else:
@@ -431,21 +391,6 @@ def cli_contract(target: str):
     except Exception as e:
         typer.echo(f"❌ Error: {e}")
         raise typer.Exit(1)
-
-
-@app.command(name="register")
-def cli_register(
-    manager_id: str = typer.Argument(..., help="Instance ID of the target Manager"),
-    component_path: str = typer.Argument(..., help="Path to the component .yaml file")
-):
-    """Deploy component, fetch its contract, register it in manager, and return instance ID."""
-    try:
-        instance_id = register(manager_id, component_path)
-        typer.echo(instance_id)
-    except Exception as e:
-        typer.echo(f"❌ Error: {e}")
-        raise typer.Exit(1)
-
 
 @app.command(name="switch")
 def cli_switch(instance: str, tier: str = typer.Argument(..., help="prod | dev | mock")):
@@ -528,17 +473,23 @@ def ask(question: str):
 
 @app.command(name="syslog")
 def cli_syslog(
-    target: str, 
+    module: Optional[str] = typer.Option(None, "--module", "-m", help="Target module name (e.g., 'Excel Reader')"),
+    instance: Optional[str] = typer.Option(None, "--instance", "-i", help="Target instance ID (32-character hash)"),
     follow: bool = typer.Option(False, "--follow", "-f", help="Stream logs continuously")
 ):
-    """
-    Fetch logs from the component's syslog endpoint via API.
-    """
+    """Fetch logs from the component's syslog endpoint via API."""
+    if not instance and not module:
+        typer.echo("❌ CLI Error: You must provide either --instance (-i) or --module (-m).")
+        raise typer.Exit(1)
+    if instance and module:
+        typer.echo("❌ CLI Error: Provide ONLY ONE of --instance or --module, not both.")
+        raise typer.Exit(1)
+
     try:
         if follow:
-            syslog(target, follow=True)
+            syslog(module=module, instance=instance, follow=True)
         else:
-            logs = syslog(target, follow=False)
+            logs = syslog(module=module, instance=instance, follow=False)
             print(logs, end="")
     except Exception as e:
         typer.secho(f"❌ Error: {e}", fg=typer.colors.RED, err=True)

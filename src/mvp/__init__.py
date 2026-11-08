@@ -4,8 +4,6 @@ from .framework import (
     ls, 
     purge, 
     contract, 
-    register, 
-    unregister, 
     syslog,
     switch,
     app
@@ -17,8 +15,6 @@ __all__ = [
     "ls", 
     "purge", 
     "contract", 
-    "register", 
-    "unregister", 
     "syslog",
     "switch",
     "app"
