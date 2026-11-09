@@ -1,20 +1,22 @@
+from . import config
 from .framework import (
-    add, 
-    call, 
-    ls, 
-    purge, 
-    contract, 
+    add,
+    call,
+    ls,
+    purge,
+    contract,
     syslog,
     switch,
     app
 )
 
 __all__ = [
-    "add", 
-    "call", 
-    "ls", 
-    "purge", 
-    "contract", 
+    "config",
+    "add",
+    "call",
+    "ls",
+    "purge",
+    "contract",
     "syslog",
     "switch",
     "app"

@@ -19,19 +19,19 @@ import types
 from typing import get_type_hints, Any
 
 from . import ast_processor
-
+from .config import CONSOLE_WIDTH, DEFAULT_EXCLUDED_DIRS, EXCLUDE_FILE
 
 
 # Read config with excluded subdirectories such as venv, etc
 def get_excluded_dirs() -> set:
     """
-    Читает список игнорируемых директорий из ~/.mvp/exclude.
+    Читает список игнорируемых директорий из EXCLUDE_FILE (~/.mvp/exclude по умолчанию).
     Возвращает множество (set) названий папок.
     """
     # Базовые исключения, которые спасут от сканирования тяжелых папок по умолчанию
-    excludes = {".git", "venv", ".venv", "env", "__pycache__", "node_modules"}
+    excludes = set(DEFAULT_EXCLUDED_DIRS)
 
-    exclude_file = Path.home() / ".mvp" / "exclude"
+    exclude_file = EXCLUDE_FILE
     if exclude_file.exists():
         with open(exclude_file, "r") as f:
             for line in f:
@@ -45,11 +45,11 @@ def get_excluded_dirs() -> set:
 def find_candidate_files(component_dir, allowed_funcs):
     excludes = get_excluded_dirs()
     candidates = []
-    
+
     for root, dirs, files in os.walk(component_dir):
         # Отсекаем ненужные папки, чтобы os.walk в них даже не заходил
         dirs[:] = [d for d in dirs if d not in excludes]
-        
+
         for filename in files:
             if filename.endswith(".py"):
                 path = os.path.join(root, filename)
@@ -62,40 +62,40 @@ def find_candidate_files(component_dir, allowed_funcs):
                                 break
                 except Exception as e:
                     print(f"ERROR: Failed to parse {path}: {e}")
-                    
+
     return candidates
 
 def load_module_from_ast(filepath, module_name, tree):
     # Компилируем AST в байт-код
     code_obj = compile(tree, filename=filepath, mode='exec')
-    
+
     # Создаем объект модуля
     module = types.ModuleType(module_name)
     module.__file__ = str(filepath)
     module.__name__ = module_name
-    
+
     # Регистрируем в sys.modules, чтобы импорты работали
     sys.modules[module_name] = module
-    
+
     # Выполняем код в пространстве имен модуля
     exec(code_obj, module.__dict__)
     return module
 
 def process_and_load_module(filepath, component_root):
     file_dir = str(Path(filepath).parent.resolve())
-    
+
     # === ИДЕАЛЬНАЯ НАСТРОЙКА ПУТЕЙ ИМПОРТА (PRO EXTENDED) ===
     # 1. Аккуратно удаляем старые записи, если они есть, чтобы обновить приоритеты
     if component_root in sys.path:
         sys.path.remove(component_root)
     if file_dir in sys.path:
         sys.path.remove(file_dir)
-        
+
     # 2. Выстраиваем железобетонный порядок поиска:
     # Приоритет 2 (sys.path[1]): Корень репозитория (RevAccel)
     # Это позволит находить абсолютные пути: from src.config import CACHE_TTL
     sys.path.insert(0, component_root)
-    
+
     # Приоритет 1 (sys.path[0]): Директория самого файла
     # Это позволит находить соседние файлы: from cluster_naming import cluster_naming
     sys.path.insert(0, file_dir)
@@ -103,26 +103,26 @@ def process_and_load_module(filepath, component_root):
     # 1. Читаем файл
     with open(filepath, "r") as f:
         source = f.read()
-    
+
     # 2. Parse
     tree = ast.parse(source, filename=filepath)
-    
+
     # 3. Security check
     check_ast_safe(tree, filepath)
 
     # 4. Modify AST
     tree = ast_processor.process_tree(tree, filepath)
-    
+
     # 5. Unique module name
     rel_path = Path(filepath).relative_to(component_root)
     module_name = "dynamic." + ".".join(rel_path.with_suffix("").parts)
-    
+
     # 6. Load
     return load_module_from_ast(filepath, module_name, tree)
 
 # Вспомогательная проверка AST (без чтения файла)
 def check_ast_safe(tree, filepath):
-    console = Console(force_terminal=True, width=10000)
+    console = Console(force_terminal=True, width=CONSOLE_WIDTH)
     for node in tree.body:
         if isinstance(node, (ast.Import, ast.ImportFrom, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Pass)):
             continue
@@ -145,7 +145,7 @@ def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_
     candidate_files = find_candidate_files(component_dir, allowed_funcs)
     modules = []
 
-    console = Console(force_terminal=True, width=10000)
+    console = Console(force_terminal=True, width=CONSOLE_WIDTH)
     activated_funcs = set()
 
     for filepath in candidate_files:
@@ -168,7 +168,7 @@ def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_
         for name, func in inspect.getmembers(module, inspect.isfunction):
             if name in allowed_funcs:
                 original_func = inspect.unwrap(func)
-                
+
                 # --- ИСТИННОЕ ИЗВЛЕЧЕНИЕ ТИПОВ ---
                 # Используем globalns=module.__dict__, чтобы typing смог развернуть ForwardRef
                 # и найти Pydantic-модели, определенные в динамическом модуле.
@@ -179,7 +179,7 @@ def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_
                     hints = {}
 
                 sig = inspect.signature(original_func)
-                
+
                 fields = {}
                 for param_name, param in sig.parameters.items():
                     ann = hints.get(param_name, Any)
@@ -197,16 +197,16 @@ def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_
                         if inspect.iscoroutinefunction(target_func):
                             return await target_func(**payload_dict)
                         return await run_in_threadpool(target_func, **payload_dict)
-                    
+
                     # Физически подменяем аннотации для FastAPI!
                     endpoint_handler.__annotations__ = {'data': Model}
                     if resp_model:
                         endpoint_handler.__annotations__['return'] = resp_model
-                        
+
                     # Маскируем хендлер под оригинальную функцию
                     endpoint_handler.__name__ = ep_name
                     endpoint_handler.__doc__ = docstring
-                    
+
                     return endpoint_handler
 
                 ep_config = endpoints_config.get(name, {})
@@ -217,8 +217,8 @@ def scan_and_import_endpoints(component_dir: str, endpoints_config: dict, start_
                     openapi_extra["x-visual-comment"] = ep_config["visual"].get("comment")
 
                 app.post(
-                    f"/{name}", 
-                    name=name, 
+                    f"/{name}",
+                    name=name,
                     response_model=response_model,
                     openapi_extra=openapi_extra if openapi_extra else None
                 )(make_endpoint(func, response_model, name, original_func.__doc__))

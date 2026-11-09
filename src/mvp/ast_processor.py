@@ -1,4 +1,5 @@
 import ast
+from .config import DEFAULT_RETURN_VALUE, ENSURE_DEFAULT_RETURN
 
 class MainBlockRemover(ast.NodeTransformer):
     def visit_If(self, node):
@@ -9,6 +10,10 @@ class MainBlockRemover(ast.NodeTransformer):
         return node
 
 class EnsureReturnTransformer(ast.NodeTransformer):
+    def __init__(self, default_return_value=DEFAULT_RETURN_VALUE):
+        super().__init__()
+        self.default_return_value = default_return_value
+
     def visit_FunctionDef(self, node):
         return self._inject_return(node)
 
@@ -16,17 +21,17 @@ class EnsureReturnTransformer(ast.NodeTransformer):
         return self._inject_return(node)
 
     def _inject_return(self, node):
-        # Если функция не заканчивается на return, добавляем return 200
+        # Если функция не заканчивается на return, добавляем return DEFAULT_RETURN_VALUE
         if not node.body or not isinstance(node.body[-1], ast.Return):
-            new_return = ast.Return(value=ast.Constant(value=200))
+            new_return = ast.Return(value=ast.Constant(value=self.default_return_value))
             ast.fix_missing_locations(new_return)
             node.body.append(new_return)
         self.generic_visit(node)
         return node
 
-def process_tree(tree, filepath):
+def process_tree(tree, filepath, ensure_return: bool = ENSURE_DEFAULT_RETURN, default_return_value=DEFAULT_RETURN_VALUE):
     tree = MainBlockRemover().visit(tree)
-    tree = EnsureReturnTransformer().visit(tree)
+    if ensure_return:
+        tree = EnsureReturnTransformer(default_return_value=default_return_value).visit(tree)
     ast.fix_missing_locations(tree)
     return tree
-

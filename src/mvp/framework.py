@@ -1,4 +1,6 @@
+import errno
 import os
+import re
 import sys
 import signal
 import subprocess
@@ -17,14 +19,28 @@ from rich.text import Text
 from rich.console import Group
 from rich.rule import Rule
 
-SECRET_TOKEN = os.environ.get("COGNITIVE_CORE_API_KEY", "default_secret")
-
-from .file_tree import (
-    tail_log_until_uvicorn_ready,
-    prepare_component_tree,
-    launch_component_instance
+from .config import (
+    API_KEY_HEADER_NAME,
+    DISCOVERY_HOST,
+    FRAMEWORK_ADD_SLEEP_SEC,
+    FRAMEWORK_LOG_FOLLOW_SLEEP_SEC,
+    FRAMEWORK_OPENAPI_TIMEOUT_SEC,
+    FRAMEWORK_PROBE_TIMEOUT_SEC,
+    FRAMEWORK_PURGE_POLL_INTERVAL_SEC,
+    FRAMEWORK_PURGE_WAIT_TIMEOUT_SEC,
+    LOG_DIR,
+    MESH_PROTOCOL_VERSION,
+    PORT_RANGE,
+    SECRET_TOKEN,
+    SEED_PEERS,
 )
-from .gossip import MESH_PROTOCOL_VERSION, PORT_RANGE
+from .file_tree import (
+    cleanup_instance_resources,
+    launch_component_instance,
+    prepare_component_tree,
+    read_instance_run_metadata,
+    tail_log_until_uvicorn_ready,
+)
 
 app = typer.Typer(help="MVP CLI tool to manage lifecycle of a component mesh")
 
@@ -36,7 +52,7 @@ app = typer.Typer(help="MVP CLI tool to manage lifecycle of a component mesh")
 def add(component: str) -> str:
     work_dir, manifest_path = prepare_component_tree(component)
     new_id = launch_component_instance(work_dir, manifest_path)
-    time.sleep(1.5)
+    time.sleep(FRAMEWORK_ADD_SLEEP_SEC)
     return new_id
 
 def contract(*, module: Optional[str] = None, instance: Optional[str] = None) -> Any:
@@ -46,15 +62,15 @@ def contract(*, module: Optional[str] = None, instance: Optional[str] = None) ->
 # TODO: This function should become a hook for integration to the container management layer of a cloud ecosystem
 def _resolve_target(modules: List[Dict[str, Any]], instance: Optional[str] = None, module: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
-    Service Discovery Hook. 
+    Service Discovery Hook.
     Future: Replace with Azure Load Balancer hook or Round-Robin logic.
     """
     if instance:
         return next((m for m in modules if m.get("instance_id") == instance), None)
-    
+
     if module:
         return next((m for m in modules if m.get("title") == module), None)
-        
+
     return None
 
 def call(*, endpoint: str, module: Optional[str] = None, instance: Optional[str] = None, data: Optional[Union[dict, list, str]] = None, headers: Optional[dict] = None) -> Any:
@@ -70,14 +86,14 @@ def call(*, endpoint: str, module: Optional[str] = None, instance: Optional[str]
 
     if data is None: data = {}
     req_headers = headers or {}
-    req_headers["X-API-Key"] = SECRET_TOKEN
+    req_headers[API_KEY_HEADER_NAME] = SECRET_TOKEN
 
     port, contract_data = asyncio.run(fetch_global_contract())
     if not contract_data:
         raise RuntimeError("❌ MVP Framework mesh is empty or unreachable.")
 
     modules = contract_data.get("modules", [])
-    
+
     match = _resolve_target(modules, instance=instance, module=module)
 
     if not match:
@@ -105,7 +121,7 @@ def call(*, endpoint: str, module: Optional[str] = None, instance: Optional[str]
         resp.raise_for_status()
         try: return resp.json()
         except json.JSONDecodeError: return resp.text
-        
+
     except requests.HTTPError as e:
         response = e.response
         detail = ""
@@ -122,17 +138,82 @@ def call(*, endpoint: str, module: Optional[str] = None, instance: Optional[str]
         raise RuntimeError(f"❌ Request failed: {e}") from e
 
 
+def _is_pid_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError as err:
+        return err.errno == errno.EPERM
+
+
+def _resolve_instance_pid(instance: str) -> Optional[int]:
+    """Определяет PID инстанса по точному файлу метаданных в RUN_DIR или лог-файлу (без ps aux)."""
+    meta = read_instance_run_metadata(instance)
+    if meta and isinstance(meta.get("pid"), int):
+        return meta["pid"]
+
+    if LOG_DIR.exists():
+        pattern = re.compile(rf"^mvp-{re.escape(instance)}-pid(\d+)\.log$")
+        for log_file in LOG_DIR.iterdir():
+            match = pattern.match(log_file.name)
+            if match:
+                return int(match.group(1))
+    return None
+
+
+def _terminate_pid(pid: int) -> None:
+    """Кроссплатформенно завершает процесс/группу процессов с эскалацией до SIGKILL по таймауту."""
+    if not _is_pid_running(pid):
+        return
+
+    # На POSIX инстанс запускается с start_new_session=True, поэтому гасим всю группу (шлюз + воркеры)
+    if hasattr(os, "killpg") and os.name != "nt":
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except OSError:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                return
+    else:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            return
+
+    deadline = time.time() + FRAMEWORK_PURGE_WAIT_TIMEOUT_SEC
+    while time.time() < deadline:
+        if not _is_pid_running(pid):
+            return
+        time.sleep(FRAMEWORK_PURGE_POLL_INTERVAL_SEC)
+
+    kill_sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+    if hasattr(os, "killpg") and os.name != "nt":
+        try:
+            os.killpg(pid, kill_sig)
+        except OSError:
+            try:
+                os.kill(pid, kill_sig)
+            except OSError:
+                pass
+    else:
+        try:
+            os.kill(pid, kill_sig)
+        except OSError:
+            pass
+
 
 def purge(instance: str):
+    pid = _resolve_instance_pid(instance)
+    if pid is None:
+        raise ValueError(f"Instance '{instance}' not found in RUN_DIR or LOG_DIR")
+
     try:
-        ps_out = subprocess.check_output(["ps", "aux"], text=True)
-        for line in ps_out.splitlines():
-            if instance in line and "mvp.autorouter" in line:
-                pid = int(line.split()[1])
-                os.kill(pid, signal.SIGTERM)
-                break
-    except Exception as e:
-        print(f"DEBUG ERROR in process cleanup: {e}")
+        _terminate_pid(pid)
+    finally:
+        cleanup_instance_resources(instance)
 
 def switch(instance: str, tier: str) -> Any:
     """
@@ -141,7 +222,7 @@ def switch(instance: str, tier: str) -> Any:
     """
     if tier not in {"mock", "prod", "dev"}:
         raise ValueError("Tier must be one of: mock, prod, dev")
-    
+
     # instance - это точно instance_id
     return call(endpoint="_sys/switch", instance=instance, data={"tier": tier})
 
@@ -155,7 +236,7 @@ def syslog(*, module: Optional[str] = None, instance: Optional[str] = None, foll
             raise RuntimeError("❌ MVP Framework mesh is empty or unreachable.")
 
         modules = contract_data.get("modules", [])
-        
+
         # Используем наш новый чистый хук Service Discovery
         match = _resolve_target(modules, instance=instance, module=module)
 
@@ -167,7 +248,7 @@ def syslog(*, module: Optional[str] = None, instance: Optional[str] = None, foll
         url = f"{base_url}/syslog-stream"
 
         try:
-            with requests.post(url, stream=True, headers={"X-API-Key": SECRET_TOKEN}) as resp:
+            with requests.post(url, stream=True, headers={API_KEY_HEADER_NAME: SECRET_TOKEN}) as resp:
                 resp.raise_for_status()
                 for line in resp.iter_lines():
                     if line:
@@ -179,28 +260,32 @@ def syslog(*, module: Optional[str] = None, instance: Optional[str] = None, foll
 
         return ""
 
-
-
 console = Console()
 
 async def fetch_global_contract():
-    headers = {"X-Mesh-Version": MESH_PROTOCOL_VERSION, "X-API-Key": SECRET_TOKEN}
-    async with httpx.AsyncClient(timeout=0.5) as client:
-        for port in range(PORT_RANGE[0], PORT_RANGE[1]):
+    headers = {"X-Mesh-Version": MESH_PROTOCOL_VERSION, API_KEY_HEADER_NAME: SECRET_TOKEN}
+    candidate_bases = list(SEED_PEERS) + [
+        f"http://{DISCOVERY_HOST}:{port}"
+        for port in range(PORT_RANGE[0], PORT_RANGE[1])
+    ]
+    async with httpx.AsyncClient(timeout=FRAMEWORK_PROBE_TIMEOUT_SEC) as client:
+        for base in candidate_bases:
             try:
                 probe = await client.post(
-                    f"http://127.0.0.1:{port}/_gossip",
+                    f"{base}/_gossip",
                     headers=headers,
                     json={"sender_id": "cli", "registry": {}}
                 )
                 if probe.status_code == 200:
                     openapi_resp = await client.get(
-                        f"http://127.0.0.1:{port}/openapi",
+                        f"{base}/openapi",
                         headers=headers,
-                        timeout=2.0
+                        timeout=FRAMEWORK_OPENAPI_TIMEOUT_SEC
                     )
                     if openapi_resp.status_code == 200:
-                        return port, openapi_resp.json()
+                        port_str = base.rsplit(":", 1)[-1]
+                        resolved_port = int(port_str) if port_str.isdigit() else base
+                        return resolved_port, openapi_resp.json()
             except Exception:
                 continue
     return None, None
@@ -208,7 +293,6 @@ async def fetch_global_contract():
 def resolve_schema_type(schema_ref: dict, components: dict) -> str:
     if not schema_ref:
         return "None"
-
     if "$ref" in schema_ref:
         schema_name = schema_ref["$ref"].split("/")[-1]
         schema = components.get("schemas", {}).get(schema_name, {})
@@ -228,73 +312,72 @@ def resolve_schema_type(schema_ref: dict, components: dict) -> str:
 async def async_ls(component_filter: Optional[str] = None):
     with console.status("[bold green]Scanning Gossip Mesh for active modules...", spinner="dots"):
         port, contract_data = await fetch_global_contract()
+        if not contract_data:
+            console.print("[yellow]MVP Framework is empty[/yellow]")
+            return
 
-    if not contract_data:
-        console.print("[yellow]MVP Framework is empty[/yellow]")
-        return
+        console.print(f"[dim]Connected to MVP Framework at port {port}[/dim]\n")
 
-    console.print(f"[dim]Connected to MVP Framework at port {port}[/dim]\n")
+        modules = contract_data.get("modules", [])
+        components = contract_data.get("components", {})
 
-    modules = contract_data.get("modules", [])
-    components = contract_data.get("components", {})
+        for module in modules:
+            title = module.get("title", "Unknown Module")
+            instance_id = module.get("instance_id", "unknown")
 
-    for module in modules:
-        title = module.get("title", "Unknown Module")
-        instance_id = module.get("instance_id", "unknown")
+            if component_filter and component_filter.lower() not in title.lower() and component_filter != instance_id:
+                continue
 
-        if component_filter and component_filter.lower() not in title.lower() and component_filter != instance_id:
-            continue
+            subtitle = module.get("subtitle", "")
+            base_url = module.get("base_url", "")
+            manifest_path = module.get("contract_path", "")
+            active_tier = module.get("active_tier", "prod")
 
-        subtitle = module.get("subtitle", "")
-        base_url = module.get("base_url", "")
-        manifest_path = module.get("contract_path", "")
-        active_tier = module.get("active_tier", "prod")
+            header = Text()
+            header.append("Component ", style="dim")
+            header.append(f"{title}\n", style="bold cyan")
 
-        header = Text()
-        header.append("Component    ", style="dim")
-        header.append(f"{title}\n", style="bold cyan")
+            if subtitle:
+                header.append("Subtitle ", style="dim")
+                header.append(f"{subtitle}\n", style="italic")
 
-        if subtitle:
-            header.append("Subtitle     ", style="dim")
-            header.append(f"{subtitle}\n", style="italic")
+            header.append("Tier ", style="dim")
+            tier_color = "magenta" if active_tier == "dev" else ("green" if active_tier == "prod" else "red")
+            header.append(f"{active_tier.upper()}\n\n", style=f"bold {tier_color}")
 
-        header.append("Tier         ", style="dim")
-        tier_color = "magenta" if active_tier == "dev" else ("green" if active_tier == "prod" else "red")
-        header.append(f"{active_tier.upper()}\n\n", style=f"bold {tier_color}")
+            header.append("Instance ", style="dim")
+            header.append(f"{instance_id}\n", style="yellow")
 
-        header.append("Instance     ", style="dim")
-        header.append(f"{instance_id}\n", style="yellow")
+            if manifest_path:
+                header.append("Contract ", style="dim")
+                header.append(f"{manifest_path}\n", style="green")
 
-        if manifest_path:
-            header.append("Contract     ", style="dim")
-            header.append(f"{manifest_path}\n", style="green")
-            
-        endpoints_text = Text()
-        endpoints = module.get("endpoints", {})
+            endpoints_text = Text()
+            endpoints = module.get("endpoints", {})
 
-        for path, methods in endpoints.items():
-            for method, details in methods.items():
-                full_url = f"{base_url}{path}"
-                req_schema = details.get("requestBody", {}).get("content", {}).get("application/json", {}).get("schema", {})
-                req_sig = resolve_schema_type(req_schema, components)
-                resp_schema = details.get("responses", {}).get("200", {}).get("content", {}).get("application/json", {}).get("schema", {})
-                resp_type = resolve_schema_type(resp_schema, components)
+            for path, methods in endpoints.items():
+                for method, details in methods.items():
+                    full_url = f"{base_url}{path}"
+                    req_schema = details.get("requestBody", {}).get("content", {}).get("application/json", {}).get("schema", {})
+                    req_sig = resolve_schema_type(req_schema, components)
+                    resp_schema = details.get("responses", {}).get("200", {}).get("content", {}).get("application/json", {}).get("schema", {})
+                    resp_type = resolve_schema_type(resp_schema, components)
 
-                if path in ["/contract", "/syslog", "/syslog-stream"]:
-                    endpoints_text.append(f"GET {full_url}\n", style="dim")
-                else:
-                    comment = details.get("x-visual-comment") or details.get("summary")
-                    if comment:
-                        endpoints_text.append(f"# {comment}\n", style="dim italic")
+                    if path in ["/contract", "/syslog", "/syslog-stream"]:
+                        endpoints_text.append(f"GET {full_url}\n", style="dim")
+                    else:
+                        comment = details.get("x-visual-comment") or details.get("summary")
+                        if comment:
+                            endpoints_text.append(f"# {comment}\n", style="dim italic")
 
-                    endpoints_text.append(f"{method.upper()} ", style="bold green")
-                    endpoints_text.append(f"{full_url} ")
-                    endpoints_text.append(f"{req_sig} ", style="yellow")
-                    endpoints_text.append(f"-> {resp_type}\n\n", style="blue") 
+                        endpoints_text.append(f"{method.upper()} ", style="bold green")
+                        endpoints_text.append(f"{full_url} ")
+                        endpoints_text.append(f"{req_sig} ", style="yellow")
+                        endpoints_text.append(f"-> {resp_type}\n\n", style="blue")
 
-        panel_content = Group(header, endpoints_text)
-        console.print(Panel(panel_content, expand=True, border_style="blue"))
-        console.print()
+            panel_content = Group(header, endpoints_text)
+            console.print(Panel(panel_content, expand=True, border_style="blue"))
+            console.print()
 
 def ls(component: Optional[str] = None):
     """Programmatic API to list all active modules dynamically from the Gossip network."""
@@ -327,7 +410,6 @@ def cli_call(
     tier: Optional[str] = typer.Option(None, "--tier", help="Target tier to route to (prod, dev, mock)")
 ):
     """Call an endpoint on a deployed instance, optionally passing JSON input."""
-    
     # Явная валидация флагов на уровне CLI для удобного UX
     if not instance and not module:
         typer.echo("❌ CLI Error: You must provide either --instance (-i) or --module (-m).")
@@ -352,18 +434,18 @@ def cli_call(
     try:
         # Пробрасываем флаги в строго именованную функцию ядра
         result = call(
-            endpoint=endpoint, 
-            module=module, 
-            instance=instance, 
-            data=json_data, 
+            endpoint=endpoint,
+            module=module,
+            instance=instance,
+            data=json_data,
             headers=headers
         )
-        
+
         if isinstance(result, (dict, list)):
             typer.echo(json.dumps(result, indent=2, ensure_ascii=False))
         else:
             typer.echo(str(result))
-            
+
     except Exception as e:
         typer.echo(str(e))
         raise typer.Exit(1)
@@ -415,10 +497,10 @@ def cli_update(
 
     try:
         if dev:
-            call(instance, "_sys/update_dev")
+            call(endpoint="_sys/update_dev", instance=instance)
             typer.echo(f"✅ Dev tier of {instance} successfully updated and restarted.")
         if prod:
-            call(instance, "_sys/update_prod")
+            call(endpoint="_sys/update_prod", instance=instance)
             typer.echo(f"✅ Prod tier of {instance} successfully updated based on contract and restarted.")
     except Exception as e:
         typer.echo(f"❌ Error: {e}")
@@ -434,11 +516,10 @@ def cli_purge(instance: str):
         typer.echo(f"❌ Error: {e}")
         raise typer.Exit(1)
 
-
 @app.command()
 def log(id: str, follow: bool = typer.Option(False, "-f", "--follow", help="Follow the log output")):
     """Show log output of a specific component instance by ID."""
-    log_dir = Path.home() / ".mvp" / "logs"
+    log_dir = LOG_DIR
     if not log_dir.exists():
         raise typer.Exit(1)
 
@@ -457,19 +538,17 @@ def log(id: str, follow: bool = typer.Option(False, "-f", "--follow", help="Foll
                     if line:
                         typer.echo(line, nl=False)
                     else:
-                        time.sleep(0.2)
+                        time.sleep(FRAMEWORK_LOG_FOLLOW_SLEEP_SEC)
             else:
                 typer.echo(f.read())
     except Exception as e:
         typer.echo(f"❌ Failed to read log file: {e}")
         raise typer.Exit(1)
 
-
 @app.command()
 def ask(question: str):
     """Ask the AI assistant about available components or their functionality."""
     typer.echo(f"🤖 Asking AI: {question}")
-
 
 @app.command(name="syslog")
 def cli_syslog(
