@@ -41,6 +41,9 @@ from .file_tree import (
     read_instance_run_metadata,
     tail_log_until_uvicorn_ready,
 )
+from .hooks import load_orchestrator_hook, slugify_module_name
+
+_client_hook = load_orchestrator_hook()
 
 app = typer.Typer(help="MVP CLI tool to manage lifecycle of a component mesh")
 
@@ -59,17 +62,27 @@ def contract(*, module: Optional[str] = None, instance: Optional[str] = None) ->
     """Fetch contract JSON explicitly by module name or instance ID."""
     return call(endpoint="contract", module=module, instance=instance, data={})
 
-# TODO: This function should become a hook for integration to the container management layer of a cloud ecosystem
 def _resolve_target(modules: List[Dict[str, Any]], instance: Optional[str] = None, module: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
-    Service Discovery Hook.
-    Future: Replace with Azure Load Balancer hook or Round-Robin logic.
+    Service Discovery & Replica Load-Balancing Hook.
+    При поиске по instance возвращает конкретную реплику.
+    При поиске по module (title или slug) балансирует вызовы между всеми живыми репликами через ReplicaOrchestratorHook.
     """
     if instance:
         return next((m for m in modules if m.get("instance_id") == instance), None)
 
     if module:
-        return next((m for m in modules if m.get("title") == module), None)
+        target_slug = slugify_module_name(module)
+        matched = [
+            (m.get("instance_id", str(idx)), m)
+            for idx, m in enumerate(modules)
+            if m.get("title") == module
+            or (m.get("module_slug") or slugify_module_name(m.get("title", ""))) == target_slug
+        ]
+        if not matched:
+            return None
+        _, chosen = _client_hook.select_replica(matched, key=f"sdk:{target_slug}")
+        return chosen
 
     return None
 

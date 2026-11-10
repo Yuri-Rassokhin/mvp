@@ -2,11 +2,13 @@ import sys
 import os
 import argparse
 import asyncio
+import re
 import secrets
 import signal
 import socket
 import subprocess
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 import yaml
 import httpx
 from contextlib import asynccontextmanager
@@ -14,7 +16,7 @@ from fastapi import FastAPI, Response, Request, HTTPException, Security, Depends
 from fastapi.security.api_key import APIKeyHeader
 from rich.console import Console
 import inspect
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import uvicorn
@@ -36,13 +38,17 @@ from .config import (
     DEFAULT_TIER,
     GATEWAY_BIND_HOST,
     GIT_REMOTE,
+    INTEGRATION_NAMESPACE_MODE,
     MANAGER_OPENAPI_TITLE,
     MESH_PROTOCOL_VERSION,
+    METRICS_AUTH_REQUIRED,
     MOCK_DEFAULT_TIMEOUT,
+    MODULE_HEADER_NAME,
     OPENAPI_DESCRIPTION,
     OPENAPI_SPEC_VERSION,
     OPENAPI_TITLE,
     OPENAPI_VERSION,
+    PROBE_AUTH_REQUIRED,
     SECRET_TOKEN,
     WORKER_BIND_HOST,
     WORKER_PORT_MAX,
@@ -51,12 +57,20 @@ from .config import (
 from .mock_generator import generate_mock_from_schema
 from .endpoints import scan_and_import_endpoints
 from .file_tree import cleanup_instance_resources
+from .hooks import (
+    InstanceLifecycleMeta,
+    LoadTracker,
+    load_orchestrator_hook,
+    pascalize_slug,
+    slugify_module_name,
+)
 from .mesh import find_free_port, get_bound_socket
-from .gossip import GossipMesh, GossipPayload
+from .gossip import GossipMesh, GossipPayload, InstanceState
 
 ### SETTINGS ###
 validate_secret_token()
 api_key_header = APIKeyHeader(name=API_KEY_HEADER_NAME, auto_error=True)
+optional_api_key_header = APIKeyHeader(name=API_KEY_HEADER_NAME, auto_error=False)
 
 console = Console(force_terminal=True, width=CONSOLE_WIDTH)
 
@@ -71,13 +85,29 @@ parser.add_argument("--tier", type=str, default=DEFAULT_TIER) # Указание
 args, unknown = parser.parse_known_args()
 
 manifest_path = Path(args.manifest_path).resolve()
-instance_id = args.instance_id # или твой вариант получения instance_id
+instance_id = args.instance_id
 component_dir = manifest_path.parent
 
 
 async def verify_api_key(api_key: str = Security(api_key_header)):
     if not secrets.compare_digest(api_key.encode("utf-8"), SECRET_TOKEN.encode("utf-8")):
         raise HTTPException(status_code=403, detail="Invalid API Key")
+
+
+def _make_conditional_auth_dep(require_auth: bool):
+    async def _dep(api_key: Optional[str] = Security(optional_api_key_header)):
+        if not require_auth:
+            return
+        if not api_key or not secrets.compare_digest(
+            api_key.encode("utf-8"), SECRET_TOKEN.encode("utf-8")
+        ):
+            raise HTTPException(status_code=403, detail="Invalid API Key")
+    return _dep
+
+
+verify_probe_auth = _make_conditional_auth_dep(PROBE_AUTH_REQUIRED)
+verify_metrics_auth = _make_conditional_auth_dep(METRICS_AUTH_REQUIRED)
+
 
 # Надежный поиск корня репозитория (где лежит .git) для работы абсолютных импортов из src/
 def get_repo_root(path: Path) -> Path:
@@ -88,11 +118,153 @@ def get_repo_root(path: Path) -> Path:
         curr = curr.parent
     return path.parent.parent.parent.resolve()
 
+
+def _rewrite_schema_refs(obj: Any, rename_map: Dict[str, str]) -> Any:
+    """Рекурсивно переписывает ссылки $ref внутри OpenAPI-фрагмента модуля во избежание коллизий схем."""
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if k == "$ref" and isinstance(v, str) and v.startswith("#/components/schemas/"):
+                old_name = v.split("/")[-1]
+                new_name = rename_map.get(old_name, old_name)
+                out[k] = f"#/components/schemas/{new_name}"
+            else:
+                out[k] = _rewrite_schema_refs(v, rename_map)
+        return out
+    if isinstance(obj, list):
+        return [_rewrite_schema_refs(item, rename_map) for item in obj]
+    return obj
+
+
+def build_deduplicated_integration_openapi(
+    registry: Dict[str, InstanceState],
+    gateway_server_url: str,
+    orchestrator_hook,
+    openapi_cfg: Optional[Dict[str, Any]] = None,
+    namespace_mode: str = INTEGRATION_NAMESPACE_MODE,
+) -> Dict[str, Any]:
+    """
+    Собирает внешний OpenAPI 3.0.3 контракт (/integration) с абстракцией от инфраструктуры:
+      1. Схлопывает (дедуплицирует) все живые реплики одного модуля в единый функциональный модуль.
+      2. Исключает коллизии имен путей (/{module_slug}/{ep}), operationId и схем components.schemas.
+      3. Не раскрывает внутренние IP/порты реплик — публикует только публичный DNS-адрес шлюза/модуля.
+    """
+    openapi_cfg = openapi_cfg or {}
+    global_schema: Dict[str, Any] = {
+        "openapi": openapi_cfg.get("openapi_version", OPENAPI_SPEC_VERSION),
+        "info": {
+            "title": openapi_cfg.get("title", OPENAPI_TITLE),
+            "version": openapi_cfg.get("version", OPENAPI_VERSION),
+            "description": openapi_cfg.get("description", OPENAPI_DESCRIPTION),
+        },
+        "servers": [
+            {
+                "url": gateway_server_url,
+                "description": "Mesh Global Gateway",
+            }
+        ],
+        "paths": {},
+        "components": {"schemas": {}},
+    }
+
+    # 1. Дедупликация реплик: группируем живые инстансы по каноническому module_slug
+    #    и выбираем одного представителя с максимальным набором путей и самым свежим heartbeat.
+    representatives: Dict[str, Tuple[str, InstanceState, int]] = {}
+    for i_id, state in registry.items():
+        if getattr(state, "status", "active") == "dead":
+            continue
+        contract = state.contract
+        if not contract:
+            continue
+
+        info = contract.get("info", {})
+        mod_title = info.get("title", "Unknown Module")
+        mod_slug = info.get("x-module-slug") or slugify_module_name(mod_title)
+
+        if mod_slug not in representatives:
+            representatives[mod_slug] = (mod_title, state, 1)
+        else:
+            prev_title, prev_state, prev_count = representatives[mod_slug]
+            prev_paths_len = len(prev_state.contract.get("paths", {}))
+            curr_paths_len = len(contract.get("paths", {}))
+            if (curr_paths_len, state.heartbeat) > (prev_paths_len, prev_state.heartbeat):
+                representatives[mod_slug] = (mod_title, state, prev_count + 1)
+            else:
+                representatives[mod_slug] = (prev_title, prev_state, prev_count + 1)
+
+    # 2. Подсчитываем частоту коротких путей для режима "on_conflict"
+    raw_path_counts: Dict[str, int] = {}
+    for mod_slug, (_, rep_state, _) in representatives.items():
+        for p_key in rep_state.contract.get("paths", {}).keys():
+            raw_path_counts[p_key] = raw_path_counts.get(p_key, 0) + 1
+
+    # Подсчитываем частоту имен схем между разными модулями
+    raw_schema_counts: Dict[str, int] = {}
+    for mod_slug, (_, rep_state, _) in representatives.items():
+        for s_name in rep_state.contract.get("components", {}).get("schemas", {}).keys():
+            raw_schema_counts[s_name] = raw_schema_counts.get(s_name, 0) + 1
+
+    # 3. Сборка бесконфликтного OpenAPI 3.0.3 документа
+    for mod_slug in sorted(representatives.keys()):
+        mod_title, rep_state, _ = representatives[mod_slug]
+        contract = rep_state.contract
+        pascal_prefix = pascalize_slug(mod_slug)
+        safe_op_prefix = mod_slug.replace("-", "_")
+
+        mod_schemas = contract.get("components", {}).get("schemas", {})
+        schema_rename_map: Dict[str, str] = {}
+        for s_name in mod_schemas.keys():
+            if namespace_mode == "always" or raw_schema_counts.get(s_name, 0) > 1:
+                schema_rename_map[s_name] = f"{pascal_prefix}_{s_name}"
+            else:
+                schema_rename_map[s_name] = s_name
+
+        for s_name, s_def in mod_schemas.items():
+            target_s_name = schema_rename_map[s_name]
+            global_schema["components"]["schemas"][target_s_name] = _rewrite_schema_refs(
+                copy.deepcopy(s_def), schema_rename_map
+            )
+
+        mod_server_url = orchestrator_hook.resolve_module_server_url(
+            module_title=mod_title,
+            module_slug=mod_slug,
+            fallback_gateway_url=gateway_server_url,
+        )
+
+        for path_key, path_item in contract.get("paths", {}).items():
+            clean_ep = path_key.lstrip("/")
+            use_ns = (
+                namespace_mode == "always"
+                or (namespace_mode == "on_conflict" and raw_path_counts.get(path_key, 0) > 1)
+            )
+            exposed_path = f"/{mod_slug}/{clean_ep}" if use_ns else f"/{clean_ep}"
+
+            rewritten_item = _rewrite_schema_refs(copy.deepcopy(path_item), schema_rename_map)
+
+            for method, op in rewritten_item.items():
+                if not isinstance(op, dict):
+                    continue
+                if "tags" not in op:
+                    op["tags"] = [mod_title]
+                safe_ep = re.sub(r"[^a-zA-Z0-9_]+", "_", clean_ep).strip("_").lower()
+                op["operationId"] = f"{safe_op_prefix}__{safe_ep}_{method.lower()}"
+                op["x-mvp-module"] = mod_title
+                op["x-mvp-module-slug"] = mod_slug
+                if mod_server_url:
+                    op["servers"] = [{"url": mod_server_url, "description": f"{mod_title} Service"}]
+
+            global_schema["paths"][exposed_path] = rewritten_item
+
+    return global_schema
+
+
 component_root = str(get_repo_root(manifest_path))
 
-with manifest_path.open("r") as f: manifest = yaml.safe_load(f)
+with manifest_path.open("r") as f:
+    manifest = yaml.safe_load(f)
 
 component_title = manifest.get("title", manifest.get("name", DEFAULT_COMPONENT_NAME))
+component_slug = manifest.get("slug") or slugify_module_name(component_title)
 component_subtitle = manifest.get("subtitle", manifest.get("description", ""))
 start_funcs = manifest.get("start", [])
 
@@ -155,19 +327,55 @@ if args.worker:
 else:
     gateway_sock, port = get_bound_socket(host=GATEWAY_BIND_HOST)
     base_url = f"http://{ADVERTISE_HOST}:{port}"
-    mesh = GossipMesh(instance_id=instance_id, base_url=base_url)
 
-    # --- СОСТОЯНИЕ ШЛЮЗА ---
     active_tier = DEFAULT_TIER
+    is_draining = False
+    ready_notified = False
     last_worker_port = port  # отслеживаем последний выданный порт
+
+    lifecycle_meta = InstanceLifecycleMeta(
+        instance_id=instance_id,
+        module_title=component_title,
+        module_slug=component_slug,
+        base_url=base_url,
+        bind_host=GATEWAY_BIND_HOST,
+        port=port,
+        active_tier=active_tier,
+        manifest_path=str(manifest_path),
+        pid=os.getpid(),
+    )
+    orchestrator_hook = load_orchestrator_hook()
+    load_tracker = LoadTracker()
+
+    async def _on_gossip_topology_change(updated_registry: Dict[str, InstanceState]):
+        lifecycle_meta.active_tier = active_tier
+        await orchestrator_hook.on_mesh_topology_changed(lifecycle_meta, updated_registry)
+
+    mesh = GossipMesh(
+        instance_id=instance_id,
+        base_url=base_url,
+        on_registry_change=_on_gossip_topology_change,
+    )
 
     workers = {
         "prod": {"process": None, "port": None, "active": False, "commit": "HEAD"},
         "dev": {"process": None, "port": None, "active": False, "commit": "HEAD"}
     }
     schema_cache = {"prod": None, "dev": None}
+    local_proxies: Dict[str, Any] = {}
     proxy_client = httpx.AsyncClient()
     git_lock = asyncio.Lock()
+
+    def _count_module_active_replicas() -> int:
+        cnt = 0
+        for state in mesh.registry.values():
+            if getattr(state, "status", "active") == "dead":
+                continue
+            info = (state.contract or {}).get("info", {})
+            slug = info.get("x-module-slug") or slugify_module_name(info.get("title", ""))
+            if slug == component_slug:
+                cnt += 1
+        return max(1, cnt) if workers["prod"]["active"] else cnt
 
     def spawn_worker(tier=DEFAULT_TIER):
         global workers, last_worker_port
@@ -193,6 +401,9 @@ else:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        global is_draining
+        await orchestrator_hook.on_gateway_started(lifecycle_meta)
+
         # 1. Запускаем Dev (выкачиваем ветку dev_branch)
         async with git_lock:
             if (component_dir / ".git").exists():
@@ -219,19 +430,23 @@ else:
         try:
             yield
         finally:
+            is_draining = True
+            await orchestrator_hook.on_instance_draining(lifecycle_meta, load_tracker=load_tracker)
+            await mesh.leave_network()
+            await orchestrator_hook.on_instance_stopped(lifecycle_meta, registry=mesh.registry)
             for t in ["prod", "dev"]:
                 if workers[t]["process"]:
                     workers[t]["process"].terminate()
-            await mesh.leave_network()
             await proxy_client.aclose()
             cleanup_instance_resources(instance_id, component_dir)
             print(f"[{instance_id}] Shutting down Gateway...")
 
+    # Внимание: глобальную зависимость verify_api_key вешаем на бизнес- и админ-маршруты,
+    # чтобы пробы балансировщиков (/_sys/health, /_sys/ready) управлялись флагом MVP_PROBE_AUTH_REQUIRED.
     app = FastAPI(
         title=component_title,
         description=component_subtitle,
         lifespan=lifespan,
-        dependencies=[Depends(verify_api_key)],
     )
     app.add_middleware(CORSMiddleware,
         allow_origins=cors_origins,
@@ -283,46 +498,117 @@ else:
         httpx_timeout = None if raw_timeout == 0 else float(raw_timeout)
 
         async def route_proxy(request: Request, response: Response):
-            # 1. Извлекаем целевой тир из заголовка или берем активный по умолчанию
-            tier = request.headers.get("x-mvp-tier", active_tier).lower()
-            if tier not in ["prod", "dev", "mock"]:
-                tier = "mock"
+            with load_tracker.track(ep_name) as track_ctx:
+                # 1. Извлекаем целевой тир из заголовка или берем активный по умолчанию
+                tier = request.headers.get("x-mvp-tier", active_tier).lower()
+                if tier not in ["prod", "dev", "mock"]:
+                    tier = "mock"
 
-            async def fallback(err_msg):
-                console.print(f"[yellow]WARN: [MOCK TIER] /{ep_name} fallback triggered for tier '{tier}': {err_msg}[/yellow]")
-                response.headers["X-MVP-Mock-Fallback"] = "true"
-                response.headers["X-MVP-Original-Error"] = str(err_msg)
-                return resolve_mock(ep_name, mock_cfg) if mock_cfg else {"error": err_msg}
+                async def fallback(err_msg):
+                    console.print(f"[yellow]WARN: [MOCK TIER] /{ep_name} fallback triggered for tier '{tier}': {err_msg}[/yellow]")
+                    response.headers["X-MVP-Mock-Fallback"] = "true"
+                    response.headers["X-MVP-Original-Error"] = str(err_msg)
+                    return resolve_mock(ep_name, mock_cfg) if mock_cfg else {"error": err_msg}
 
-            if tier == "mock":
-                return await fallback("Mock tier explicitly requested")
+                if tier == "mock":
+                    return await fallback("Mock tier explicitly requested")
 
-            # 2. Проверяем, жив ли целевой воркер
-            target_worker = workers.get(tier)
-            if not target_worker or not target_worker["port"] or not target_worker["active"]:
-                return await fallback(f"Target tier '{tier}' is not active or currently updating")
+                # 2. Проверяем, жив ли целевой воркер
+                target_worker = workers.get(tier)
+                if not target_worker or not target_worker["port"] or not target_worker["active"]:
+                    track_ctx.mark_error()
+                    return await fallback(f"Target tier '{tier}' is not active or currently updating")
 
-            body = await request.body()
-            headers = {k: v for k, v in request.headers.items() if k.lower() not in ["host", "content-length"]}
+                body = await request.body()
+                headers = {k: v for k, v in request.headers.items() if k.lower() not in ["host", "content-length"]}
 
-            try:
-                # 3. Маршрутизируем запрос
-                resp = await proxy_client.request(
-                    method=request.method,
-                    url=f"http://{WORKER_BIND_HOST}:{target_worker['port']}/{ep_name}",
-                    content=body, headers=headers, timeout=httpx_timeout
-                )
-                if resp.status_code >= 500:
-                    return await fallback(f"{tier.upper()} worker returned HTTP {resp.status_code}")
-                return Response(content=resp.content, status_code=resp.status_code, headers=dict(resp.headers))
-            except Exception as e:
-                return await fallback(str(e))
+                try:
+                    # 3. Маршрутизируем запрос
+                    resp = await proxy_client.request(
+                        method=request.method,
+                        url=f"http://{WORKER_BIND_HOST}:{target_worker['port']}/{ep_name}",
+                        content=body, headers=headers, timeout=httpx_timeout
+                    )
+                    if resp.status_code >= 500:
+                        track_ctx.mark_error()
+                        return await fallback(f"{tier.upper()} worker returned HTTP {resp.status_code}")
+                    return Response(content=resp.content, status_code=resp.status_code, headers=dict(resp.headers))
+                except Exception as e:
+                    track_ctx.mark_error()
+                    return await fallback(str(e))
         return route_proxy
 
     for ep_name, ep_cfg in endpoints_config.items():
         if ep_cfg.get("visibility", "public") == "public":
-            app.post(f"/{ep_name}", name=ep_name, dependencies=[Depends(verify_api_key)])(make_proxy(ep_name, ep_cfg))
+            proxy_fn = make_proxy(ep_name, ep_cfg)
+            local_proxies[ep_name] = proxy_fn
+            app.post(f"/{ep_name}", name=ep_name, dependencies=[Depends(verify_api_key)])(proxy_fn)
+            # Поддерживаем также локальный вызов по каноническому пути /{component_slug}/{ep_name} без сетевого хопа
+            app.post(
+                f"/{component_slug}/{ep_name}",
+                include_in_schema=False,
+                dependencies=[Depends(verify_api_key)],
+            )(proxy_fn)
 
+    # -----------------------------------------------------------------------
+    # СИСТЕМНЫЕ ЭНДПОИНТЫ ПРОБ И АВТОСКЕЙЛИНГА (KEDA / Prometheus / Cloud LB)
+    # -----------------------------------------------------------------------
+    @app.get("/_sys/health", include_in_schema=False, dependencies=[Depends(verify_probe_auth)])
+    async def sys_health():
+        return {
+            "status": "draining" if is_draining else "ok",
+            "instance_id": instance_id,
+            "module": component_title,
+            "module_slug": component_slug,
+            "active_tier": active_tier,
+        }
+
+    @app.get("/_sys/ready", include_in_schema=False, dependencies=[Depends(verify_probe_auth)])
+    async def sys_ready():
+        is_ready = (not is_draining) and (
+            active_tier == "mock" or bool(workers.get(active_tier, {}).get("active"))
+        )
+        payload = {
+            "ready": is_ready,
+            "draining": is_draining,
+            "instance_id": instance_id,
+            "module": component_title,
+            "module_slug": component_slug,
+            "active_tier": active_tier,
+        }
+        return JSONResponse(status_code=200 if is_ready else 503, content=payload)
+
+    @app.get("/_sys/load", include_in_schema=False, dependencies=[Depends(verify_api_key)])
+    async def sys_load():
+        is_ready = bool(workers.get("prod", {}).get("active")) or active_tier == "mock"
+        lifecycle_meta.active_tier = active_tier
+        return load_tracker.snapshot(
+            meta=lifecycle_meta,
+            is_ready=is_ready,
+            is_draining=is_draining,
+            module_active_replicas=_count_module_active_replicas(),
+        )
+
+    @app.get(
+        "/_sys/metrics",
+        include_in_schema=False,
+        response_class=PlainTextResponse,
+        dependencies=[Depends(verify_metrics_auth)],
+    )
+    async def sys_metrics():
+        is_ready = bool(workers.get("prod", {}).get("active")) or active_tier == "mock"
+        lifecycle_meta.active_tier = active_tier
+        body = load_tracker.to_prometheus(
+            meta=lifecycle_meta,
+            is_ready=is_ready,
+            is_draining=is_draining,
+            module_active_replicas=_count_module_active_replicas(),
+        )
+        return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
+
+    # -----------------------------------------------------------------------
+    # УПРАВЛЕНИЕ ТИРАМИ И СХЕМАМИ
+    # -----------------------------------------------------------------------
     @app.post("/_sys/switch", include_in_schema=False, dependencies=[Depends(verify_api_key)])
     async def sys_switch(request: Request):
         global active_tier
@@ -330,6 +616,7 @@ else:
         target = data.get("tier", DEFAULT_TIER).lower()
         if target in ["prod", "dev", "mock"]:
             active_tier = target
+            lifecycle_meta.active_tier = active_tier
         return {"status": f"Active tier switched to {active_tier}"}
 
     @app.post("/_sys/update_dev", include_in_schema=False, dependencies=[Depends(verify_api_key)])
@@ -379,10 +666,14 @@ else:
 
     @app.post("/_sys/schema", include_in_schema=False, dependencies=[Depends(verify_api_key)])
     async def sys_schema(request: Request, tier: str = DEFAULT_TIER):
-        global schema_cache, workers
+        global schema_cache, workers, ready_notified
         schema_cache[tier] = await request.json()
         if tier in workers:
             workers[tier]["active"] = True
+        if tier == "prod" and not ready_notified:
+            ready_notified = True
+            mesh._update_self_state(build_local_contract())
+            await orchestrator_hook.on_instance_ready(lifecycle_meta, mesh.registry)
         return {"status": f"schema received for {tier}"}
 
     def build_local_contract():
@@ -399,6 +690,7 @@ else:
         if "info" not in schema: schema["info"] = {}
         schema["info"]["title"] = component_title
         schema["info"]["description"] = component_subtitle
+        schema["info"]["x-module-slug"] = component_slug
         schema["info"]["x-contract-path"] = str(manifest_path)
         schema["info"]["x-active-tier"] = active_tier
         schema["info"].pop("version", None)
@@ -439,6 +731,7 @@ else:
     def get_global_network():
         return {i_id: state.model_dump() for i_id, state in mesh.registry.items()}
 
+    # ВНУТРЕННИЙ КОНТУР: /openapi сохраняет порепликовую детализацию (instance_id, base_url каждой реплики)
     @app.api_route("/openapi", methods=["GET", "POST"], dependencies=[Depends(verify_api_key)])
     def get_global_openapi():
         global_schema = {"title": MANAGER_OPENAPI_TITLE, "modules": [], "components": {"schemas": {}}}
@@ -450,6 +743,7 @@ else:
             module_entry = {
                 "instance_id": i_id,
                 "title": info.get("title", "Unknown Module"),
+                "module_slug": info.get("x-module-slug") or slugify_module_name(info.get("title", "Unknown Module")),
                 "subtitle": info.get("description", ""),
                 "contract_path": info.get("x-contract-path", ""),
                 "active_tier": info.get("x-active-tier", DEFAULT_TIER),
@@ -461,98 +755,133 @@ else:
                 global_schema["components"]["schemas"][schema_name] = schema_def
         return global_schema
 
+    # ВНЕШНИЙ КОНТУР: /integration дедуплицирует реплики и устраняет коллизии имен по стандарту OpenAPI 3.0.3
     @app.api_route("/integration", methods=["GET", "POST"], dependencies=[Depends(verify_api_key)])
     def get_strict_openapi(request: Request):
-        openapi_cfg = manifest.get("openapi", {})
-        # 1. Базовый строгий каркас OpenAPI
-        global_schema = {
-            "openapi": openapi_cfg.get("openapi_version", OPENAPI_SPEC_VERSION),
-            "info": {
-                "title": openapi_cfg.get("title", OPENAPI_TITLE),
-                "version": openapi_cfg.get("version", OPENAPI_VERSION),
-                "description": openapi_cfg.get("description", OPENAPI_DESCRIPTION)
-            },
-            "servers": [
-                {
-                    # Узел динамически указывает сам себя как глобальный Gateway
-                    "url": str(request.base_url).rstrip("/"),
-                    "description": "Mesh Global Gateway"
-                }
-            ],
-            "paths": {},
-            "components": {
-                "schemas": {}
-            }
-        }
+        gateway_url = orchestrator_hook.resolve_public_gateway_url(
+            str(request.base_url).rstrip("/"), lifecycle_meta
+        )
+        return build_deduplicated_integration_openapi(
+            registry=mesh.registry,
+            gateway_server_url=gateway_url,
+            orchestrator_hook=orchestrator_hook,
+            openapi_cfg=manifest.get("openapi", {}),
+            namespace_mode=INTEGRATION_NAMESPACE_MODE,
+        )
 
+    def _collect_mesh_candidates(
+        raw_path: str, requested_module: Optional[str]
+    ) -> List[Tuple[str, InstanceState, str]]:
+        """
+        Находит все живые реплики в Gossip-реестре, обслуживающие запрошенный путь.
+        Поддерживает:
+          1. Канонический путь с неймспейсом модуля: /{module_slug}/{ep_name}
+          2. Короткий путь /{ep_name} + опциональный заголовок X-MVP-Module: <title или slug>
+        Возвращает список кортежей (instance_id, state, target_ep_name).
+        """
+        clean = raw_path.strip("/")
+        if not clean:
+            return []
+
+        req_mod_slug = slugify_module_name(requested_module) if requested_module else None
+        parts = clean.split("/", 1)
+
+        candidates: List[Tuple[str, InstanceState, str]] = []
+
+        # Попытка A: трактуем первый сегмент как module_slug (/{module_slug}/{ep_name})
+        if len(parts) == 2 and not req_mod_slug:
+            cand_slug, cand_ep = parts[0].lower(), parts[1]
+            for i_id, state in mesh.registry.items():
+                if getattr(state, "status", "active") == "dead" or not state.contract:
+                    continue
+                info = state.contract.get("info", {})
+                node_slug = info.get("x-module-slug") or slugify_module_name(info.get("title", ""))
+                if node_slug == cand_slug and f"/{cand_ep}" in state.contract.get("paths", {}):
+                    candidates.append((i_id, state, cand_ep))
+            if candidates:
+                return candidates
+
+        # Попытка B: трактуем путь целиком как /{ep_name} (с учетом X-MVP-Module, если передан)
         for i_id, state in mesh.registry.items():
-            if getattr(state, "status", "active") == "dead":
+            if getattr(state, "status", "active") == "dead" or not state.contract:
                 continue
+            info = state.contract.get("info", {})
+            node_title = info.get("title", "")
+            node_slug = info.get("x-module-slug") or slugify_module_name(node_title)
+            if req_mod_slug and node_slug != req_mod_slug and node_title.lower() != requested_module.lower():
+                continue
+            if f"/{clean}" in state.contract.get("paths", {}):
+                candidates.append((i_id, state, clean))
 
-            contract = state.contract
-            if not contract: continue
+        return candidates
 
-            node_title = contract.get("info", {}).get("title", "Unknown Module")
-
-            # 2. Сбор и маппинг путей
-            for path_key, path_item in contract.get("paths", {}).items():
-                new_path_item = copy.deepcopy(path_item)
-
-                # Добавляем теги для красивой группировки эндпоинтов в UI Microsoft
-                for method, op in new_path_item.items():
-                    if isinstance(op, dict) and "tags" not in op:
-                        op["tags"] = [node_title]
-
-                global_schema["paths"][path_key] = new_path_item
-
-            # 3. Сбор схем данных (Input/Output Pydantic модели)
-            schemas = contract.get("components", {}).get("schemas", {})
-            for s_name, s_def in schemas.items():
-                # Т.к. Pydantic обычно дает уникальные имена моделям (напр. EthicsInput),
-                # мы можем безопасно сливать их в один общий словарь компонентов.
-                global_schema["components"]["schemas"][s_name] = copy.deepcopy(s_def)
-
-        return global_schema
-
-    # 4. УНИВЕРСАЛЬНЫЙ MESH-ПРОКСИ (ТОТ САМЫЙ GATEWAY)
+    # 4. УНИВЕРСАЛЬНЫЙ MESH-ПРОКСИ (ТОТ САМЫЙ GATEWAY С БАЛАНСИРОВКОЙ РЕПЛИК И FAILOVER)
     # ВАЖНО: Этот декоратор с {path:path} должен быть объявлен ПОСЛЕДНИМ из всех маршрутов,
     # так как он перехватывает все пути, которые не были обработаны локально (make_proxy).
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"], include_in_schema=False, dependencies=[Depends(verify_api_key)])
-    async def global_mesh_proxy(request: Request, path: str):
+    async def global_mesh_proxy(request: Request, response: Response, path: str):
         # Игнорируем внутренние системные вызовы фреймворка
         if path.startswith("_sys") or path in ["contract", "network", "openapi", "integration", "syslog", "syslog-stream"]:
             raise HTTPException(status_code=404, detail="Not found")
 
-        target_base_url = None
+        requested_module = request.headers.get(MODULE_HEADER_NAME)
+        candidates = _collect_mesh_candidates(path, requested_module=requested_module)
 
-        # Ищем в Gossip-сети узел, который владеет запрошенным путем
-        for i_id, state in mesh.registry.items():
-            if getattr(state, "status", "active") == "dead": continue
-            if not state.contract: continue
-
-            # Если запрошенный путь числится в контракте чужого узла
-            if f"/{path}" in state.contract.get("paths", {}):
-                target_base_url = state.base_url
-                break
-
-        if not target_base_url:
+        if not candidates:
             raise HTTPException(status_code=404, detail=f"Path /{path} not found in active mesh network")
 
-        # Формируем прокси-запрос
+        # Выбираем стартовую реплику через хук балансировки (Round-Robin / Random),
+        # а остальные реплики держим в очереди автоматического failover!
+        lb_key = f"{requested_module or ''}:{path}"
+        primary_pair = orchestrator_hook.select_replica(
+            [(i_id, (state, ep_name)) for i_id, state, ep_name in candidates],
+            key=lb_key,
+        )
+        ordered_targets = [primary_pair] + [
+            (i_id, (state, ep_name))
+            for i_id, state, ep_name in candidates
+            if i_id != primary_pair[0]
+        ]
+
         body = await request.body()
         headers = {k: v for k, v in request.headers.items() if k.lower() not in ["host", "content-length"]}
 
-        try:
-            resp = await proxy_client.request(
-                method=request.method,
-                url=f"{target_base_url}/{path}",
-                content=body,
-                headers=headers,
-                params=request.query_params
+        last_error: Optional[Exception] = None
+        last_base_url: str = ""
+
+        with load_tracker.track(f"mesh:{path}") as track_ctx:
+            for chosen_id, (chosen_state, target_ep) in ordered_targets:
+                # Если балансировщик выбрал текущий узел — исполняем локально без лишнего HTTP-хопа
+                if chosen_id == instance_id and target_ep in local_proxies:
+                    return await local_proxies[target_ep](request, response)
+
+                last_base_url = chosen_state.base_url
+                try:
+                    resp = await proxy_client.request(
+                        method=request.method,
+                        url=f"{chosen_state.base_url}/{target_ep}",
+                        content=body,
+                        headers=headers,
+                        params=request.query_params
+                    )
+                    if resp.status_code >= 500:
+                        track_ctx.mark_error()
+                    return Response(content=resp.content, status_code=resp.status_code, headers=dict(resp.headers))
+                except httpx.RequestError as exc:
+                    last_error = exc
+                    continue
+                except Exception as exc:
+                    track_ctx.mark_error()
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Mesh Gateway Error (Target: {last_base_url}): {str(exc)}",
+                    )
+
+            track_ctx.mark_error()
+            raise HTTPException(
+                status_code=502,
+                detail=f"Mesh Gateway Error (All {len(ordered_targets)} replica(s) unreachable, last={last_base_url}): {last_error}",
             )
-            return Response(content=resp.content, status_code=resp.status_code, headers=dict(resp.headers))
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Mesh Gateway Error (Target: {target_base_url}): {str(e)}")
 
     if __name__ == "__main__":
         config = uvicorn.Config(app, loop="asyncio")

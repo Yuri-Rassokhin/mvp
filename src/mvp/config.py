@@ -220,3 +220,61 @@ FRAMEWORK_PURGE_WAIT_TIMEOUT_SEC: float = float(
 FRAMEWORK_PURGE_POLL_INTERVAL_SEC: float = float(
     os.environ.get("MVP_FRAMEWORK_PURGE_POLL_INTERVAL_SEC", "0.1")
 )
+
+
+# ===========================================================================
+# 6. ВНЕШНИЙ КОНТУР (/integration), DNS И ХУКИ ОРКЕСТРАТОРОВ РЕПЛИК
+# ===========================================================================
+# Режим неймспейса путей в /integration:
+#   "always"      -> /{module_slug}/{endpoint} для всех модулей (нулевые коллизии)
+#   "on_conflict" -> /{endpoint} для уникальных имен, /{module_slug}/{endpoint} при дубликатах
+#   "none"        -> /{endpoint} без префикса пути (только префиксация operationId и схем)
+INTEGRATION_NAMESPACE_MODE: str = (
+    os.environ.get("MVP_INTEGRATION_NAMESPACE_MODE", "always").strip().lower()
+)
+
+# Заголовок явного указания целевого модуля при вызове короткого пути /{endpoint}
+MODULE_HEADER_NAME: str = os.environ.get("MVP_MODULE_HEADER", "X-MVP-Module")
+
+# Публичный DNS-адрес единого шлюза для блока "servers" в /integration
+# Например: "https://api.cognitive-core.internal" или "http://mvp.local"
+PUBLIC_GATEWAY_URL: Optional[str] = (
+    os.environ.get("MVP_PUBLIC_GATEWAY_URL", "").strip().rstrip("/") or None
+)
+
+# Опциональный шаблон индивидуального DNS-адреса каждого модуля в /integration
+# Например: "https://{module_slug}.cognitive-core.internal"
+PUBLIC_MODULE_URL_TEMPLATE: Optional[str] = (
+    os.environ.get("MVP_PUBLIC_MODULE_URL_TEMPLATE", "").strip() or None
+)
+
+# Подключаемый хук жизненного цикла и балансировки реплик (через запятую можно несколько):
+#   "cloud" / "noop" -> CloudNoOpHook (Azure Container Apps / KEDA, AWS, OCI)
+#   "local_upstream" -> LocalUpstreamFileHook (генерация upstream-конфига Nginx/прокси на одной VM)
+#   "pkg.mod:Class"  -> произвольный пользовательский класс, наследующий ReplicaOrchestratorHook
+ORCHESTRATOR_HOOK_SPEC: str = os.environ.get("MVP_ORCHESTRATOR_HOOK", "cloud")
+
+# Стратегия выбора реплики внутри mesh ("round_robin" | "random")
+REPLICA_LB_STRATEGY: str = (
+    os.environ.get("MVP_REPLICA_LB_STRATEGY", "round_robin").strip().lower()
+)
+
+# Настройки LocalUpstreamFileHook (для локальной VM с динамическими портами 8500..8999)
+UPSTREAM_CONF_PATH: Path = Path(
+    os.environ.get("MVP_UPSTREAM_CONF_PATH", str(RUN_DIR / "mvp_nginx_upstreams.conf"))
+).expanduser()
+UPSTREAM_JSON_PATH: Path = Path(
+    os.environ.get("MVP_UPSTREAM_JSON_PATH", str(RUN_DIR / "mvp_upstreams.json"))
+).expanduser()
+UPSTREAM_RELOAD_CMD: Optional[str] = (
+    os.environ.get("MVP_UPSTREAM_RELOAD_CMD", "").strip() or None
+)
+
+# Настройки телеметрии нагрузки, проб готовности и Graceful Drain (KEDA / Prometheus / ALB)
+PROBE_AUTH_REQUIRED: bool = _env_bool("MVP_PROBE_AUTH_REQUIRED", False)
+METRICS_AUTH_REQUIRED: bool = _env_bool("MVP_METRICS_AUTH_REQUIRED", True)
+METRICS_WINDOW_SEC: float = float(os.environ.get("MVP_METRICS_WINDOW_SEC", "60.0"))
+DRAIN_TIMEOUT_SEC: float = float(os.environ.get("MVP_DRAIN_TIMEOUT_SEC", "10.0"))
+DRAIN_POLL_INTERVAL_SEC: float = float(
+    os.environ.get("MVP_DRAIN_POLL_INTERVAL_SEC", "0.1")
+)

@@ -3,7 +3,7 @@ import asyncio
 import time
 import random
 import httpx
-from typing import Dict, Any, Optional
+from typing import Callable, Dict, Any, Optional
 from pydantic import BaseModel
 
 from .config import (
@@ -38,7 +38,13 @@ class GossipPayload(BaseModel):
     registry: Dict[str, InstanceState]
 
 class GossipMesh:
-    def __init__(self, instance_id: str, base_url: str, port_range: tuple = PORT_RANGE):
+    def __init__(
+        self,
+        instance_id: str,
+        base_url: str,
+        port_range: tuple = PORT_RANGE,
+        on_registry_change: Optional[Callable[[Dict[str, InstanceState]], Any]] = None,
+    ):
         self.instance_id = instance_id
         self.base_url = base_url
         self.port_range = port_range
@@ -46,6 +52,17 @@ class GossipMesh:
         self.tombstones: Dict[str, float] = {}
         self.http_client = httpx.AsyncClient(timeout=GOSSIP_HTTP_CLIENT_TIMEOUT_SEC)
         self.started_at = time.time()
+        self.on_registry_change = on_registry_change
+
+    def _notify_topology_change(self) -> None:
+        if not self.on_registry_change:
+            return
+        try:
+            res = self.on_registry_change(self.registry)
+            if asyncio.iscoroutine(res):
+                asyncio.create_task(res)
+        except Exception:
+            pass
 
     async def leave_network(self):
         """Паттерн Tombstone: оповещаем сеть о своем закрытии"""
@@ -55,6 +72,7 @@ class GossipMesh:
         # Инкрементируем пульс, чтобы соседи точно приняли обновление, и ставим статус мертвеца
         self.registry[self.instance_id].heartbeat += 1
         self.registry[self.instance_id].status = "dead"
+        self._notify_topology_change()
 
         payload_json = GossipPayload(
             sender_id=self.instance_id, registry=self.registry
@@ -77,13 +95,15 @@ class GossipMesh:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
     def _update_self_state(self, local_contract: Dict[str, Any]):
-        if self.instance_id not in self.registry:
+        is_new = self.instance_id not in self.registry
+        if is_new:
             self.registry[self.instance_id] = InstanceState(
                 base_url=self.base_url,
                 contract=local_contract,
                 heartbeat=0,
                 local_updated_at=time.time()
             )
+            self._notify_topology_change()
         else:
             self.registry[self.instance_id].contract = local_contract
             self.registry[self.instance_id].heartbeat += 1
@@ -126,15 +146,30 @@ class GossipMesh:
 
     def merge_registry(self, incoming_registry: Dict[str, InstanceState]):
         current_time = time.time()
+        topology_changed = False
         for i_id, inc_state in incoming_registry.items():
             if i_id in self.tombstones and current_time - self.tombstones[i_id] < GOSSIP_TOMBSTONE_TTL_SEC:
+                continue
+            if inc_state.status == "dead":
+                self.tombstones[i_id] = current_time
+                if i_id in self.registry and self.registry[i_id].status != "dead":
+                    self.registry[i_id] = inc_state
+                    self.registry[i_id].local_updated_at = current_time
+                    topology_changed = True
                 continue
             if i_id not in self.registry:
                 inc_state.local_updated_at = current_time
                 self.registry[i_id] = inc_state
+                topology_changed = True
             elif inc_state.heartbeat > self.registry[i_id].heartbeat:
+                prev_url = self.registry[i_id].base_url
+                prev_status = self.registry[i_id].status
                 self.registry[i_id] = inc_state
                 self.registry[i_id].local_updated_at = current_time
+                if inc_state.base_url != prev_url or inc_state.status != prev_status:
+                    topology_changed = True
+        if topology_changed:
+            self._notify_topology_change()
 
     async def gossip_loop(self, get_local_contract_func):
         headers = {
@@ -209,4 +244,6 @@ class GossipMesh:
 
             for d in dead_nodes:
                 del self.registry[d]
+            if dead_nodes:
+                self._notify_topology_change()
 
